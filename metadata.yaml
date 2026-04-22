@@ -1,7 +1,7 @@
 name: astrbot_plugin_lifeup
 desc: 人升(LifeUp) App 联动插件，支持任务管理、属性查询、金币奖惩、物品操作等功能
 author: AstrBot Dev
-version: 1.0.0
+version: 1.1.0
 repo: https://github.com/example/astrbot_plugin_lifeup
 support_platforms:
   - aiocqhttp
