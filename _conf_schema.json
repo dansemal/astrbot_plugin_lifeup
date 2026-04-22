@@ -1,0 +1,26 @@
+{
+    "api_url": {
+        "description": "LifeUp HTTP API 地址",
+        "type": "string",
+        "hint": "人升 App 的 HTTP API 地址，如 http://localhost:13276 或 http://100.119.108.3:13276",
+        "default": "http://localhost:13276"
+    },
+    "api_token": {
+        "description": "API 鉴权 Token",
+        "type": "string",
+        "hint": "如果在云人升中开启了安全密钥，请在此配置。留空表示不启用鉴权。",
+        "default": ""
+    },
+    "default_category_id": {
+        "description": "默认清单 ID",
+        "type": "int",
+        "hint": "查询任务时使用的默认清单 ID，0 表示全部清单",
+        "default": 0
+    },
+    "timeout": {
+        "description": "API 请求超时时间（秒）",
+        "type": "int",
+        "hint": "请求 LifeUp API 的超时时间",
+        "default": 5
+    }
+}
