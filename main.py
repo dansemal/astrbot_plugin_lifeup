@@ -129,11 +129,12 @@ def _int_list(values: list[str]) -> list[int]:
 
 
 # ---------------------------------------------------------------------------
-# 格式化辅助
+# ---------------------------------------------------------------------------
+# 格式化辅助 (QQ/OneBot V11 风格)
 # ---------------------------------------------------------------------------
 
 def _emoji_status(status: int | None) -> str:
-    """任务状态码 → 表情。"""
+    """任务状态码 -> 表情。"""
     if status is None:
         return "❓"
     mapping = {0: "⏳", 1: "✅", 2: "❌", 3: "🧊"}
@@ -141,7 +142,7 @@ def _emoji_status(status: int | None) -> str:
 
 
 def _status_label(status: int | None) -> str:
-    """任务状态码 → 文字标签。"""
+    """任务状态码 -> 文字标签。"""
     if status is None:
         return "未知"
     mapping = {0: "待完成", 1: "已完成", 2: "已放弃", 3: "已冻结"}
@@ -149,7 +150,7 @@ def _status_label(status: int | None) -> str:
 
 
 def _task_type_emoji(t: int | None) -> str:
-    """任务类型 → 表情。"""
+    """任务类型 -> 表情。"""
     if t is None:
         return "📝"
     mapping = {0: "📝", 1: "🔢", 4: "🍅"}
@@ -157,17 +158,17 @@ def _task_type_emoji(t: int | None) -> str:
 
 
 def _freq_label(f: int | None) -> str:
-    """频率 → 标签。"""
+    """频率 -> 标签。"""
     if f is None:
         return ""
     mapping = {0: "", 1: "🔁", -1: "♾️"}
     return mapping.get(f, "")
 
 
-def _emoji_progress(current: int, total: int, width: int = 8) -> str:
-    """QQ 风格 emoji 进度条（emoji 宽度在 QQ 中一致）。"""
+def _emoji_progress(current: int, total: int, width: int = 6) -> str:
+    """QQ 风格 emoji 进度条。"""
     if total <= 0:
-        return "⬜⬜⬜⬜⬜⬜⬜⬜ 0%"
+        return "⬜⬜⬜⬜⬜⬜ 0%"
     ratio = min(current / total, 1.0)
     filled = int(width * ratio)
     empty = width - filled
@@ -192,303 +193,328 @@ def _format_timestamp(ts: int | str | None) -> str:
         return str(ts)[:16]
 
 
-# ==================================================================
-#  QQ / OneBot V11 风格格式化输出方法
-# ==================================================================
+class LifeUpPlugin(Star):
+    """LifeUp 联动插件主类。
 
+    通过 HTTP API 对接 LifeUp App，提供完整的任务、经济、物品、
+    属性、成就、番茄钟等管理功能。
 
-def _fmt_tasks(self, tasks: list[dict[str, Any]] | None) -> str:
-    if not tasks:
-        return "━━━ 📋 任务清单 ━━━\n\n  (暂无任务)\n\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈"
-    total = len(tasks)
-    pending = sum(1 for t in tasks if t.get("status") == 0)
-    done = sum(1 for t in tasks if t.get("status") == 1)
-    lines = [
-        f"━━━ 📋 任务清单 ({total}项) ━━━",
-        f"  ⏳待办{pending}  ✅完成{done}  ❌放弃{sum(1 for t in tasks if t.get('status')==2)}",
-        "",
-    ]
-    for t in tasks[:20]:
-        tid = t.get("id", "?")
-        name = t.get("title", t.get("todo", "无名"))
-        status = t.get("status", 0)
-        status_icon = _emoji_status(status)
-        freq = _freq_label(t.get("frequency"))
-        coin = t.get("coin", 0)
-        exp = t.get("exp", 0)
-        cat = t.get("categoryName", "")
-        # 截断名称（QQ 显示约15个中文字符宽度）
-        display_name = name[:14] + "…" if len(name) > 15 else name
-        reward = []
-        if coin:
-            reward.append(f"💰{coin}")
-        if exp:
-            reward.append(f"🧪{exp}")
-        reward_str = " ".join(reward) if reward else ""
-        cat_str = f" 📂{cat}" if cat else ""
-        lines.append(
-            f"{status_icon} [{tid}] {display_name} {freq}{cat_str}"
+    Attributes:
+        context: AstrBot 上下文
+        config: 插件配置字典
+        client: LifeUp HTTP API 客户端实例
+    """
+
+    def __init__(self, context: Context, config: dict[str, Any]) -> None:
+        super().__init__(context)
+        self.config = config
+        self.client = LifeUpClient(
+            api_url=config.get("api_url", "http://localhost:13276"),
+            api_token=config.get("api_token", ""),
+            timeout=config.get("timeout", 5),
         )
-        if reward_str:
-            lines.append(f"    └─ {reward_str}")
-    if len(tasks) > 20:
-        lines.append(f"\n  ... 还有 {len(tasks) - 20} 个任务")
-    lines.append("\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈")
-    return "\n".join(lines)
 
+    def terminate(self) -> None:
+        """插件卸载时的清理逻辑（当前无需额外资源释放）。"""
+        logger.info("LifeUp 插件已卸载")
 
-def _fmt_items(self, items: list[dict[str, Any]] | None) -> str:
-    if not items:
-        return "━━━ 🛒 商店货架 ━━━\n\n  (暂无商品)\n\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈"
-    lines = [
-        f"━━━ 🛒 商店货架 ({len(items)}件) ━━━",
-        "",
-    ]
-    for it in items[:15]:
-        iid = it.get("id", "?")
-        name = it.get("name", "无名")
-        price = it.get("price", "?")
-        stock = it.get("quantity", it.get("stock", "?"))
-        # 库存状态
-        if isinstance(stock, int):
-            stock_icon = "🟢" if stock > 10 else "🟡" if stock > 0 else "🔴"
+    # ==================================================================
+    #  错误提示
+    # ==================================================================
+
+    def _api_error_msg(self, exc: Exception) -> str:
+        """生成面向用户的 API 错误提示文本。"""
+        return (
+            f"❌ LifeUp API 请求失败\n"
+            f"原因：{exc}\n"
+            f"\n"
+            f"请检查以下配置项：\n"
+            f"1. API 地址：{self.config.get('api_url', '未设置')}\n"
+            f"2. LifeUp App 是否已开启 HTTP API 服务\n"
+            f"3. 网络是否连通"
+        )
+
+    def _no_data_msg(self, category: str = "数据") -> str:
+        return f"ℹ️ 暂无 {category} 数据"
+
+    # ==================================================================
+    #  格式化输出方法
+    # ==================================================================
+
+    def _fmt_tasks(self, tasks: list[dict[str, Any]] | None) -> str:
+        if not tasks:
+            return "━━━ 📋 任务清单 ━━━\n\n  (暂无任务)\n\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈"
+        total = len(tasks)
+        pending = sum(1 for t in tasks if t.get("status") == 0)
+        done = sum(1 for t in tasks if t.get("status") == 1)
+        lines = [
+            f"━━━ 📋 任务清单 ({total}项) ━━━",
+            f"  ⏳待办{pending}  ✅完成{done}  ❌放弃{sum(1 for t in tasks if t.get('status')==2)}",
+            "",
+        ]
+        for t in tasks[:20]:
+            tid = t.get("id", "?")
+            name = t.get("title", t.get("todo", "无名"))
+            status_icon = _emoji_status(t.get("status", 0))
+            freq = _freq_label(t.get("frequency"))
+            coin = t.get("coin", 0)
+            exp = t.get("exp", 0)
+            cat = t.get("categoryName", "")
+            display_name = name[:14] + "…" if len(name) > 15 else name
+            reward = []
+            if coin:
+                reward.append(f"💰{coin}")
+            if exp:
+                reward.append(f"🧪{exp}")
+            reward_str = " ".join(reward) if reward else ""
+            cat_str = f" 📂{cat}" if cat else ""
+            lines.append(f"{status_icon} [{tid}] {display_name} {freq}{cat_str}")
+            if reward_str:
+                lines.append(f"    └─ {reward_str}")
+        if len(tasks) > 20:
+            lines.append(f"\n  ... 还有 {len(tasks) - 20} 个任务")
+        lines.append("\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈")
+        return "\n".join(lines)
+
+    def _fmt_items(self, items: list[dict[str, Any]] | None) -> str:
+        if not items:
+            return "━━━ 🛒 商店货架 ━━━\n\n  (暂无商品)\n\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈"
+        lines = [
+            f"━━━ 🛒 商店货架 ({len(items)}件) ━━━",
+            "",
+        ]
+        for it in items[:15]:
+            iid = it.get("id", "?")
+            name = it.get("name", "无名")
+            price = it.get("price", "?")
+            stock = it.get("quantity", it.get("stock", "?"))
+            if isinstance(stock, int):
+                stock_icon = "🟢" if stock > 10 else "🟡" if stock > 0 else "🔴"
+            else:
+                stock_icon = "⚪"
+            display_name = name[:14] + "…" if len(name) > 15 else name
+            lines.append(f"  [{iid}] {display_name} 💰{price} {stock_icon}库存:{stock}")
+        if len(items) > 15:
+            lines.append(f"\n  ... 还有 {len(items) - 15} 件")
+        lines.append("\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈")
+        return "\n".join(lines)
+
+    def _fmt_skills(self, skills: list[dict[str, Any]] | None) -> str:
+        if not skills:
+            return "━━━ 📊 属性面板 ━━━\n\n  (暂无属性)\n\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈"
+        lines = [
+            f"━━━ 📊 属性面板 ({len(skills)}项) ━━━",
+            "",
+        ]
+        for sk in skills:
+            name = sk.get("name", "无名")
+            level = sk.get("level", 0)
+            cur_exp = sk.get("cur_exp", sk.get("exp", 0))
+            max_exp = sk.get("max_exp", 100)
+            icon = sk.get("icon", "")
+            icon_str = f"{icon} " if icon else ""
+            bar = _emoji_progress(cur_exp, max_exp, 6)
+            lines.append(f"  {icon_str}{name} Lv.{level}")
+            lines.append(f"    └─ {bar} {cur_exp}/{max_exp}")
+        lines.append("\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈")
+        return "\n".join(lines)
+
+    def _fmt_coin(self, data: dict[str, Any] | None) -> str:
+        if not data:
+            return "━━━ 💰 资产概览 ━━━\n\n  金币数据不可用\n\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈"
+        if isinstance(data, dict):
+            amount = data.get("value", data.get("coin", "未知"))
+            bank = data.get("bank", data.get("atm", "?"))
         else:
-            stock_icon = "⚪"
-        display_name = name[:14] + "…" if len(name) > 15 else name
-        lines.append(f"  [{iid}] {display_name} 💰{price} {stock_icon}库存:{stock}")
-    if len(items) > 15:
-        lines.append(f"\n  ... 还有 {len(items) - 15} 件")
-    lines.append("\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈")
-    return "\n".join(lines)
+            amount = data
+            bank = "?"
+        return (
+            "━━━ 💰 资产概览 ━━━\n\n"
+            f"  👛 钱包 {amount}\n"
+            f"  🏦 存款 {bank}\n\n"
+            "┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈"
+        )
 
+    def _fmt_synthesis(self, formulas: list[dict[str, Any]] | None) -> str:
+        if not formulas:
+            return "━━━ ⚗️ 合成配方 ━━━\n\n  (暂无配方)\n\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈"
+        lines = [
+            f"━━━ ⚗️ 合成配方 ({len(formulas)}种) ━━━",
+            "",
+        ]
+        for f in formulas[:12]:
+            fid = f.get("id", "?")
+            name = f.get("name", "无名")
+            result = f.get("resultItemName", f.get("result_name", "?"))
+            display_name = name[:14] + "…" if len(name) > 15 else name
+            lines.append(f"  [{fid}] {display_name} -> {result}")
+        if len(formulas) > 12:
+            lines.append(f"\n  ... 还有 {len(formulas) - 12} 种")
+        lines.append("\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈")
+        return "\n".join(lines)
 
-def _fmt_skills(self, skills: list[dict[str, Any]] | None) -> str:
-    if not skills:
-        return "━━━ 📊 属性面板 ━━━\n\n  (暂无属性)\n\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈"
-    lines = [
-        f"━━━ 📊 属性面板 ({len(skills)}项) ━━━",
-        "",
-    ]
-    for sk in skills:
-        name = sk.get("name", "无名")
-        level = sk.get("level", 0)
-        cur_exp = sk.get("cur_exp", sk.get("exp", 0))
-        max_exp = sk.get("max_exp", 100)
-        icon = sk.get("icon", "")
-        icon_str = f"{icon} " if icon else ""
-        bar = _emoji_progress(cur_exp, max_exp, 6)
-        lines.append(f"  {icon_str}{name} Lv.{level}")
-        lines.append(f"    └─ {bar} {cur_exp}/{max_exp}")
-    lines.append("\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈")
-    return "\n".join(lines)
+    def _fmt_feelings(self, feelings: list[dict[str, Any]] | None) -> str:
+        if not feelings:
+            return "━━━ 📝 感想墙 ━━━\n\n  (暂无感想)\n\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈"
+        lines = [
+            f"━━━ 📝 感想墙 ({len(feelings)}条) ━━━",
+            "",
+        ]
+        for fl in feelings[:12]:
+            fid = fl.get("id", "?")
+            content = fl.get("content", "")
+            ts = _format_timestamp(fl.get("timestamp", fl.get("time")))
+            display = content[:35] + "…" if len(content) > 35 else content
+            lines.append(f"  [{fid}] 💭 {display}")
+            lines.append(f"    └─ 🕐 {ts}")
+        if len(feelings) > 12:
+            lines.append(f"\n  ... 还有 {len(feelings) - 12} 条")
+        lines.append("\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈")
+        return "\n".join(lines)
 
+    def _fmt_history(self, history: list[dict[str, Any]] | None) -> str:
+        if not history:
+            return "━━━ 📜 历史记录 ━━━\n\n  (暂无记录)\n\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈"
+        lines = [
+            f"━━━ 📜 历史记录 ({len(history)}条) ━━━",
+            "",
+        ]
+        for h in history[:12]:
+            hid = h.get("id", "?")
+            task_name = h.get("taskName", h.get("title", "未知"))
+            action = h.get("action", "?")
+            action_icon = {"complete": "✅", "give_up": "❌", "undo": "↩️"}.get(action, "📝")
+            ts = _format_timestamp(h.get("timestamp", h.get("time")))
+            coin = h.get("coin", 0)
+            exp = h.get("exp", 0)
+            reward = []
+            if coin:
+                reward.append(f"💰+{coin}")
+            if exp:
+                reward.append(f"🧪+{exp}")
+            reward_str = " ".join(reward) if reward else ""
+            display_name = task_name[:14] + "…" if len(task_name) > 15 else task_name
+            lines.append(f"  {action_icon} [{hid}] {display_name}")
+            detail = f"🕐 {ts}"
+            if reward_str:
+                detail += f" · {reward_str}"
+            lines.append(f"    └─ {detail}")
+        if len(history) > 12:
+            lines.append(f"\n  ... 还有 {len(history) - 12} 条")
+        lines.append("\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈")
+        return "\n".join(lines)
 
-def _fmt_coin(self, data: dict[str, Any] | None) -> str:
-    if not data:
-        return "━━━ 💰 资产概览 ━━━\n\n  金币数据不可用\n\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈"
-    if isinstance(data, dict):
-        amount = data.get("value", data.get("coin", "未知"))
-        bank = data.get("bank", data.get("atm", "?"))
-    else:
-        amount = data
-        bank = "?"
-    return (
-        "━━━ 💰 资产概览 ━━━\n\n"
-        f"  👛 钱包 {amount}\n"
-        f"  🏦 存款 {bank}\n\n"
-        "┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈"
-    )
+    def _fmt_categories(self, cats: list[dict[str, Any]] | None, label: str = "分类") -> str:
+        if not cats:
+            return f"━━━ 📂 {label} ━━━\n\n  (暂无{label})\n\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈"
+        lines = [
+            f"━━━ 📂 {label} ({len(cats)}项) ━━━",
+            "",
+        ]
+        for c in cats:
+            cid = c.get("id", "?")
+            name = c.get("name", "未命名")
+            count = c.get("count", c.get("itemCount", ""))
+            count_str = f" ({count}项)" if count else ""
+            lines.append(f"  📁 [{cid}] {name}{count_str}")
+        lines.append(f"\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈")
+        return "\n".join(lines)
 
+    def _fmt_achievements(self, achievements: list[dict[str, Any]] | None) -> str:
+        if not achievements:
+            return "━━━ 🏆 成就殿堂 ━━━\n\n  (暂无成就)\n\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈"
+        total = len(achievements)
+        unlocked = sum(1 for a in achievements if a.get("unlocked", a.get("achieved", False)))
+        bar = _emoji_progress(unlocked, total, 8)
+        lines = [
+            f"━━━ 🏆 成就殿堂 ({unlocked}/{total}) ━━━",
+            f"  进度 {bar}",
+            "",
+        ]
+        for a in achievements[:15]:
+            aid = a.get("id", "?")
+            title = a.get("title", a.get("name", "无名"))
+            is_unlocked = a.get("unlocked", a.get("achieved", False))
+            status_icon = "🌟" if is_unlocked else "🔒"
+            desc = a.get("content", a.get("description", ""))
+            cat = a.get("categoryName", a.get("category", ""))
+            cat_str = f" · {cat}" if cat else ""
+            display_title = title[:14] + "…" if len(title) > 15 else title
+            lines.append(f"  {status_icon} [{aid}] {display_title}{cat_str}")
+            if desc and not is_unlocked:
+                desc_short = desc[:20] + "…" if len(desc) > 20 else desc
+                lines.append(f"    └─ 💡 {desc_short}")
+        if len(achievements) > 15:
+            lines.append(f"\n  ... 还有 {len(achievements) - 15} 个")
+        lines.append("\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈")
+        return "\n".join(lines)
 
-def _fmt_synthesis(self, formulas: list[dict[str, Any]] | None) -> str:
-    if not formulas:
-        return "━━━ ⚗️ 合成配方 ━━━\n\n  (暂无配方)\n\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈"
-    lines = [
-        f"━━━ ⚗️ 合成配方 ({len(formulas)}种) ━━━",
-        "",
-    ]
-    for f in formulas[:12]:
-        fid = f.get("id", "?")
-        name = f.get("name", "无名")
-        result = f.get("resultItemName", f.get("result_name", "?"))
-        display_name = name[:14] + "…" if len(name) > 15 else name
-        lines.append(f"  [{fid}] {display_name} → {result}")
-    if len(formulas) > 12:
-        lines.append(f"\n  ... 还有 {len(formulas) - 12} 种")
-    lines.append("\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈")
-    return "\n".join(lines)
+    def _fmt_pomodoro_records(self, records: list[dict[str, Any]] | None) -> str:
+        if not records:
+            return "━━━ 🍅 专注日历 ━━━\n\n  (暂无番茄记录)\n\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈"
+        total_ms = sum(r.get("duration", 0) for r in records)
+        total_min = int(total_ms / 60000)
+        lines = [
+            f"━━━ 🍅 专注日历 ({len(records)}条) ━━━",
+            f"  总计专注 {total_min} 分钟",
+            "",
+        ]
+        for r in records[:12]:
+            rid = r.get("id", "?")
+            task = r.get("taskName", "专注")
+            dur = r.get("duration", 0)
+            dur_min = int(dur / 60000) if dur else 0
+            ts = _format_timestamp(r.get("timestamp", r.get("time")))
+            display_task = task[:14] + "…" if len(task) > 15 else task
+            if dur_min >= 45:
+                dur_icon = "🔥"
+            elif dur_min >= 25:
+                dur_icon = "✨"
+            else:
+                dur_icon = "🌱"
+            lines.append(f"  {dur_icon} [{rid}] {display_task} ⏱️{dur_min}分 🕐{ts}")
+        if len(records) > 12:
+            lines.append(f"\n  ... 还有 {len(records) - 12} 条")
+        lines.append("\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈")
+        return "\n".join(lines)
 
+    def _fmt_info(self, info: dict[str, Any] | None) -> str:
+        if not info:
+            return "━━━ 📱 应用信息 ━━━\n\n  应用信息不可用\n\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈"
+        lines = ["━━━ 📱 应用信息 ━━━", ""]
+        key_labels = {
+            "version": "📦 版本",
+            "appVersion": "📦 版本",
+            "packageName": "📁 包名",
+            "deviceModel": "📱 设备",
+            "apiVersion": "🔌 API版本",
+        }
+        for k, v in info.items():
+            label = key_labels.get(k, f"  {k}")
+            lines.append(f"  {label}: {v}")
+        lines.append("\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈")
+        return "\n".join(lines)
 
-def _fmt_feelings(self, feelings: list[dict[str, Any]] | None) -> str:
-    if not feelings:
-        return "━━━ 📝 感想墙 ━━━\n\n  (暂无感想)\n\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈"
-    lines = [
-        f"━━━ 📝 感想墙 ({len(feelings)}条) ━━━",
-        "",
-    ]
-    for fl in feelings[:12]:
-        fid = fl.get("id", "?")
-        content = fl.get("content", "")
-        ts = _format_timestamp(fl.get("timestamp", fl.get("time")))
-        display = content[:35] + "…" if len(content) > 35 else content
-        lines.append(f"  [{fid}] 💭 {display}")
-        lines.append(f"    └─ 🕐 {ts}")
-    if len(feelings) > 12:
-        lines.append(f"\n  ... 还有 {len(feelings) - 12} 条")
-    lines.append("\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈")
-    return "\n".join(lines)
+    def _fmt_status(self, coin_data: dict[str, Any], skills: list[dict[str, Any]]) -> str:
+        parts = [self._fmt_coin(coin_data), ""]
+        if skills:
+            parts.append(self._fmt_skills(skills))
+        total_level = sum(s.get("level", 0) for s in skills) if skills else 0
+        if total_level > 0:
+            avg = total_level // len(skills) if skills else 0
+            parts.append(f"\n📈 总等级 {total_level} · 平均 Lv.{avg}")
+        return "\n".join(parts)
 
-
-def _fmt_history(self, history: list[dict[str, Any]] | None) -> str:
-    if not history:
-        return "━━━ 📜 历史记录 ━━━\n\n  (暂无记录)\n\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈"
-    lines = [
-        f"━━━ 📜 历史记录 ({len(history)}条) ━━━",
-        "",
-    ]
-    for h in history[:12]:
-        hid = h.get("id", "?")
-        task_name = h.get("taskName", h.get("title", "未知"))
-        action = h.get("action", "?")
-        action_icon = {"complete": "✅", "give_up": "❌", "undo": "↩️"}.get(action, "📝")
-        ts = _format_timestamp(h.get("timestamp", h.get("time")))
-        coin = h.get("coin", 0)
-        exp = h.get("exp", 0)
-        reward = []
-        if coin:
-            reward.append(f"💰+{coin}")
-        if exp:
-            reward.append(f"🧪+{exp}")
-        reward_str = " ".join(reward) if reward else ""
-        display_name = task_name[:14] + "…" if len(task_name) > 15 else task_name
-        lines.append(f"  {action_icon} [{hid}] {display_name}")
-        detail = f"🕐 {ts}"
-        if reward_str:
-            detail += f" · {reward_str}"
-        lines.append(f"    └─ {detail}")
-    if len(history) > 12:
-        lines.append(f"\n  ... 还有 {len(history) - 12} 条")
-    lines.append("\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈")
-    return "\n".join(lines)
-
-
-def _fmt_categories(self, cats: list[dict[str, Any]] | None, label: str = "分类") -> str:
-    if not cats:
-        return f"━━━ 📂 {label} ━━━\n\n  (暂无{label})\n\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈"
-    lines = [
-        f"━━━ 📂 {label} ({len(cats)}项) ━━━",
-        "",
-    ]
-    for c in cats:
-        cid = c.get("id", "?")
-        name = c.get("name", "未命名")
-        count = c.get("count", c.get("itemCount", ""))
-        count_str = f" ({count}项)" if count else ""
-        lines.append(f"  📁 [{cid}] {name}{count_str}")
-    lines.append(f"\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈")
-    return "\n".join(lines)
-
-
-def _fmt_achievements(self, achievements: list[dict[str, Any]] | None) -> str:
-    if not achievements:
-        return "━━━ 🏆 成就殿堂 ━━━\n\n  (暂无成就)\n\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈"
-    total = len(achievements)
-    unlocked = sum(1 for a in achievements if a.get("unlocked", a.get("achieved", False)))
-    progress = int(unlocked / total * 100) if total else 0
-    bar = _emoji_progress(unlocked, total, 8)
-    lines = [
-        f"━━━ 🏆 成就殿堂 ({unlocked}/{total}) ━━━",
-        f"  进度 {bar}",
-        "",
-    ]
-    for a in achievements[:15]:
-        aid = a.get("id", "?")
-        title = a.get("title", a.get("name", "无名"))
-        is_unlocked = a.get("unlocked", a.get("achieved", False))
-        status_icon = "🌟" if is_unlocked else "🔒"
-        desc = a.get("content", a.get("description", ""))
-        cat = a.get("categoryName", a.get("category", ""))
-        cat_str = f" · {cat}" if cat else ""
-        display_title = title[:14] + "…" if len(title) > 15 else title
-        lines.append(f"  {status_icon} [{aid}] {display_title}{cat_str}")
-        if desc and not is_unlocked:
-            desc_short = desc[:20] + "…" if len(desc) > 20 else desc
-            lines.append(f"    └─ 💡 {desc_short}")
-    if len(achievements) > 15:
-        lines.append(f"\n  ... 还有 {len(achievements) - 15} 个")
-    lines.append("\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈")
-    return "\n".join(lines)
-
-
-def _fmt_pomodoro_records(self, records: list[dict[str, Any]] | None) -> str:
-    if not records:
-        return "━━━ 🍅 专注日历 ━━━\n\n  (暂无番茄记录)\n\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈"
-    total_ms = sum(r.get("duration", 0) for r in records)
-    total_min = int(total_ms / 60000)
-    lines = [
-        f"━━━ 🍅 专注日历 ({len(records)}条) ━━━",
-        f"  总计专注 {total_min} 分钟",
-        "",
-    ]
-    for r in records[:12]:
-        rid = r.get("id", "?")
-        task = r.get("taskName", "专注")
-        dur = r.get("duration", 0)
-        dur_min = int(dur / 60000) if dur else 0
-        ts = _format_timestamp(r.get("timestamp", r.get("time")))
-        display_task = task[:14] + "…" if len(task) > 15 else task
-        if dur_min >= 45:
-            dur_icon = "🔥"
-        elif dur_min >= 25:
-            dur_icon = "✨"
-        else:
-            dur_icon = "🌱"
-        lines.append(f"  {dur_icon} [{rid}] {display_task} ⏱️{dur_min}分 🕐{ts}")
-    if len(records) > 12:
-        lines.append(f"\n  ... 还有 {len(records) - 12} 条")
-    lines.append("\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈")
-    return "\n".join(lines)
-
-
-def _fmt_info(self, info: dict[str, Any] | None) -> str:
-    if not info:
-        return "━━━ 📱 应用信息 ━━━\n\n  应用信息不可用\n\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈"
-    lines = ["━━━ 📱 应用信息 ━━━", ""]
-    key_labels = {
-        "version": "📦 版本",
-        "appVersion": "📦 版本",
-        "packageName": "📁 包名",
-        "deviceModel": "📱 设备",
-        "apiVersion": "🔌 API版本",
-    }
-    for k, v in info.items():
-        label = key_labels.get(k, f"  {k}")
-        lines.append(f"  {label}: {v}")
-    lines.append("\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈")
-    return "\n".join(lines)
-
-
-def _fmt_status(self, coin_data: dict[str, Any], skills: list[dict[str, Any]]) -> str:
-    parts = [self._fmt_coin(coin_data), ""]
-    if skills:
-        parts.append(self._fmt_skills(skills))
-    total_level = sum(s.get("level", 0) for s in skills) if skills else 0
-    if total_level > 0:
-        avg = total_level // len(skills) if skills else 0
-        parts.append(f"\n📈 总等级 {total_level} · 平均 Lv.{avg}")
-    return "\n".join(parts)
-
-
-def _fmt_success(self, resp: dict[str, Any], action: str = "操作") -> str:
-    """QQ 风格操作结果提示。"""
-    if isinstance(resp, dict):
-        if resp.get("status") == "error":
-            msg = resp.get("message", "未知错误")
-            return f"❌ ━━━ {action}失败 ━━━\n\n  {msg}\n\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈"
-        data = resp.get("data")
-        if data and isinstance(data, str) and data != "success":
-            return f"✅ ━━━ {action}成功 ━━━\n\n  {data}\n\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈"
-    return f"✅ ━━━ {action}成功 ━━━\n\n  已完成！\n\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈"
+    def _fmt_success(self, resp: dict[str, Any], action: str = "操作") -> str:
+        """QQ 风格操作结果提示。"""
+        if isinstance(resp, dict):
+            if resp.get("status") == "error":
+                msg = resp.get("message", "未知错误")
+                return f"❌ ━━━ {action}失败 ━━━\n\n  {msg}\n\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈"
+            data = resp.get("data")
+            if data and isinstance(data, str) and data != "success":
+                return f"✅ ━━━ {action}成功 ━━━\n\n  {data}\n\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈"
+        return f"✅ ━━━ {action}成功 ━━━\n\n  已完成！\n\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈"
     # ==================================================================
     #  指令组定义
     # ==================================================================
@@ -2054,31 +2080,22 @@ def _fmt_success(self, resp: dict[str, Any], action: str = "操作") -> str:
             tasks (array[object]): 任务配置数组，每个元素包含：
                 - todo (string, 必填): 任务标题
                 - notes (string, 可选): 备注
-                - coin (number, 可选): 基础金币奖励，建议简单任务5-10，困难任务20-50
-                - coin_var (number, 可选): 金币浮动范围，实现随机奖励。如coin=20,coin_var=5则实际奖励15-25金币
+                - coin (number, 可选): 金币奖励，建议简单任务5-10，困难任务20-50
                 - exp (number, 可选): 经验奖励
                 - skills (array[number], 可选): 关联属性ID
                 - category (number, 可选): 清单分类ID（先查 categories 获取）
                 - frequency (number, 可选): 0=单次(默认), 1=每日, -1=无限/习惯
                 - task_type (number, 可选): 0=普通(默认), 1=计数任务, 4=番茄钟任务
-                - count (number, 可选): 计数任务的目标次数
-                - deadline (number, 可选): 期限时间戳（毫秒）
-                - reminder (string, 可选): 提醒时间，如"08:00"
         """
         try:
             resp = await self.client.batch_add_tasks(tasks)
             if isinstance(resp, dict):
                 if resp.get("status") == "error":
                     return f"❌ 批量创建失败：{resp.get('message', '未知错误')}"
-            lines = [f"✅ 已批量创建 {len(tasks)} 个任务"]
-            for t in tasks:
-                coin = t.get('coin', 0)
-                coin_var = t.get('coin_var', 0)
-                coin_str = f"💰{coin}±{coin_var}" if coin_var else f"💰{coin}"
-                freq = t.get('frequency', 0)
-                freq_label = {1: "[每日]", -1: "[习惯]"}.get(freq, "[单次]")
-                lines.append(f"  • {freq_label} {t.get('todo', '未命名')} {coin_str} 🧪{t.get('exp', 0)}")
-            return "\n".join(lines)
+            return f"✅ 已批量创建 {len(tasks)} 个任务\n" + "\n".join(
+                f"  • {t.get('todo', '未命名')}（💰{t.get('coin', 0)} 🧪{t.get('exp', 0)}）"
+                for t in tasks
+            )
         except Exception as exc:
             logger.error("llm_batch_create_tasks 失败: %s", exc)
             return self._api_error_msg(exc)
@@ -2120,30 +2137,7 @@ def _fmt_success(self, resp: dict[str, Any], action: str = "操作") -> str:
 
             coin_val = coin_data.get("value", coin_data.get("coin", "未知")) if isinstance(coin_data, dict) else coin_data
 
-            # 体系完整性分析
-            system_health = []
-            has_daily_tasks = any(
-                t.get("frequency") == 1 for t in (tasks if isinstance(tasks, list) else [])
-            )
-            has_habit_tasks = any(
-                t.get("frequency") == -1 for t in (tasks if isinstance(tasks, list) else [])
-            )
-            reward_tasks = [t for t in (tasks if isinstance(tasks, list) else []) if t.get("coin", 0) > 0]
-            avg_reward = sum(t.get("coin", 0) for t in reward_tasks) / len(reward_tasks) if reward_tasks else 0
-            has_random_reward = any(
-                t.get("coin_var", 0) > 0 for t in (tasks if isinstance(tasks, list) else [])
-            )
-
-            if not has_daily_tasks:
-                system_health.append("  ⚠️ 缺少每日重复任务，建议建立晨间/晚间例行")
-            if not has_habit_tasks:
-                system_health.append("  ⚠️ 缺少习惯养成任务，建议设置无限重复的好习惯")
-            if len(reward_tasks) < 3:
-                system_health.append("  ⚠️ 大部分任务没有设置金币奖励，激励效果可能不足")
-            if avg_reward > 50:
-                system_health.append(f"  ⚠️ 平均奖励过高（{avg_reward:.0f}金币），建议参考体系建设手册，10金币≈1元人民币")
-            if not has_random_reward:
-                system_health.append("  💡 可尝试使用随机奖励（coin_var），增加不确定性趣味性")
+            # 属性分析
             skill_lines = []
             if isinstance(skills, list) and skills:
                 lowest = min(skills, key=lambda s: s.get("level", 999))
@@ -2165,12 +2159,6 @@ def _fmt_success(self, resp: dict[str, Any], action: str = "操作") -> str:
                 "",
             ]
             lines.extend(skill_lines)
-            if system_health:
-                lines.extend([
-                    "",
-                    "🔍 体系健康检查：",
-                ])
-                lines.extend(system_health)
             lines.extend([
                 "",
                 "💡 建议：",
@@ -2213,207 +2201,36 @@ def _fmt_success(self, resp: dict[str, Any], action: str = "操作") -> str:
         task_name: str, difficulty: str = "medium",
         skills: list[int] | None = None,
         reason: str = "",
-        use_random: bool = True,
     ) -> str:
         """根据任务难度智能计算并执行奖励。适用于AI自动评估用户表现后给予激励。
 
         当用户完成任务、AI需要自动判断奖励额度时调用。
         会根据难度自动计算金币和经验值：简单5/2、中等15/8、困难30/20、极限60/50。
-        支持随机奖励范围，增加不确定性趣味性（体系建设推荐用法）。
 
         Args:
             task_name (string): 完成的任务名称，必填。
             difficulty (string): 难度，enum: ["easy", "medium", "hard", "extreme"]，默认"medium"。
             skills (array[number]): 关联的属性ID，可选。
             reason (string): 奖励原因，可选。默认使用任务名。
-            use_random (boolean): 是否启用随机浮动，默认true。启用后实际奖励在基础值±20%范围内浮动。
         """
         try:
             coin, exp = LifeUpClient.smart_reward(difficulty)
             content = reason or f"完成「{task_name}」"
 
-            # 随机浮动
-            if use_random:
-                import random
-                coin_var = int(coin * 0.2)
-                exp_var = int(exp * 0.2)
-                actual_coin = coin + random.randint(-coin_var, coin_var)
-                actual_exp = exp + random.randint(-exp_var, exp_var)
-                actual_coin = max(1, actual_coin)
-                actual_exp = max(1, actual_exp)
-                random_str = f"（随机浮动：基础{coin}±{coin_var}）"
-            else:
-                actual_coin = coin
-                actual_exp = exp
-                random_str = ""
-
             # 先奖励金币
-            resp_coin = await self.client.reward_coin(content, actual_coin)
+            resp_coin = await self.client.reward_coin(content, coin)
             # 再奖励经验
             if skills:
-                resp_exp = await self.client.reward_exp(content, actual_exp, skills=skills)
+                resp_exp = await self.client.reward_exp(content, exp, skills=skills)
             else:
-                resp_exp = await self.client.reward_exp(content, actual_exp)
+                resp_exp = await self.client.reward_exp(content, exp)
 
             skill_str = f"（关联属性：{skills}）" if skills else ""
             return (
                 f"🎯 智能奖励 — 「{task_name}」\n"
-                f"难度：{difficulty} | 💰+{actual_coin}金币 🧪+{actual_exp}经验{skill_str}{random_str}\n"
+                f"难度：{difficulty} | 💰+{coin}金币 🧪+{exp}经验{skill_str}\n"
                 f"✅ 奖励已发放"
             )
         except Exception as exc:
             logger.error("llm_smart_reward 失败: %s", exc)
-            return self._api_error_msg(exc)
-
-    @filter.llm_tool(name="lifeup_query_pending_tasks")
-    async def llm_query_pending_tasks(self, event: AstrMessageEvent) -> str:
-        """查询人升(LifeUp)中当前待完成的任务（未开始/进行中的任务）。
-
-        当用户问"我今天该做什么"、"还有什么没做"、"接下来干什么"时调用。
-        自动过滤出 status=0 的待办任务，按紧急程度排序。
-
-        无参数。
-        """
-        try:
-            resp = await self.client.query_tasks()
-            tasks = resp.get("data", []) if isinstance(resp, dict) else resp
-            if not isinstance(tasks, list):
-                return "ℹ️ 暂无任务数据"
-            pending = [t for t in tasks if t.get("status") == 0]
-            if not pending:
-                return "🎉 太棒了！当前没有待办任务，所有任务都已完成！"
-            lines = [f"📋 待办任务（共 {len(pending)} 项）：\n"]
-            for t in pending[:15]:  # 最多显示15个
-                tid = t.get("id", "?")
-                name = t.get("title", t.get("todo", "无名"))
-                coin = t.get("coin", 0)
-                exp = t.get("exp", 0)
-                freq = t.get("frequency", 0)
-                freq_label = {1: "🔁每日", -1: "♾️习惯"}.get(freq, "📌单次")
-                deadline = t.get("deadline", 0)
-                deadline_str = ""
-                if deadline:
-                    from datetime import datetime
-                    try:
-                        dt = datetime.fromtimestamp(deadline / 1000)
-                        deadline_str = f" ⏰{dt.strftime('%m-%d %H:%M')}"
-                    except:
-                        pass
-                lines.append(f"  [{tid}] {freq_label} {name} 💰{coin} 🧪{exp}{deadline_str}")
-            if len(pending) > 15:
-                lines.append(f"\n... 还有 {len(pending) - 15} 个任务")
-            lines.append("\n💡 建议优先完成高奖励且快到期的事项")
-            return "\n".join(lines)
-        except Exception as exc:
-            logger.error("llm_query_pending_tasks 失败: %s", exc)
-            return self._api_error_msg(exc)
-
-    @filter.llm_tool(name="lifeup_apply_template")
-    async def llm_apply_template(
-        self, event: AstrMessageEvent,
-        template_name: str,
-        category_id: int = 0,
-        skills_map: dict[str, int] | None = None,
-    ) -> str:
-        """一键应用人升(LifeUp)预设体系模板。快速建立完整的游戏化成长体系。
-
-        当用户说"帮我建立一套健身体系"、"给我一套学习计划"、"我想养成好习惯"时调用。
-        AI会自动批量创建任务清单，并配置合理的奖励/频率/属性关联。
-
-        支持的模板：
-        - "fitness" / "健身": 每日运动任务（跑步、俯卧撑、深蹲等），关联力量/耐力属性
-        - "study" / "学习": 每日学习任务（阅读、背单词、专业课），关联智力/知识属性
-        - "routine" / "作息": 日常作息任务（早起、早睡、喝水、刷牙），关联自律/健康属性
-        - "comprehensive" / "综合": 完整的体系参考手册方案（作息+学习+运动+生活）
-
-        Args:
-            template_name (string): 模板名称，enum: ["fitness", "study", "routine", "comprehensive"]
-            category_id (number): 任务清单分类ID，可选。默认0表示不指定分类。
-            skills_map (object): 属性ID映射字典，如{"力量": 1, "智力": 2}。不填则使用默认映射。
-        """
-        try:
-            # 默认属性映射
-            default_skills = {
-                "strength": 1, "endurance": 2, "intelligence": 3,
-                "knowledge": 4, "discipline": 5, "health": 6,
-            }
-            sm = skills_map or default_skills
-            cid = category_id if category_id > 0 else None
-            tasks_to_create: list[dict[str, Any]] = []
-
-            if template_name.lower() in ("fitness", "健身", "运动"):
-                strength = sm.get("strength", 1)
-                endurance = sm.get("endurance", 2)
-                tasks_to_create = [
-                    {"todo": "晨跑3公里", "coin": 30, "coin_var": 5, "exp": 15, "skills": [strength, endurance], "frequency": 1, "category": cid, "notes": "30分钟慢跑，保持心率130-150"},
-                    {"todo": "俯卧撑20个", "coin": 10, "coin_var": 2, "exp": 5, "skills": [strength], "frequency": 1, "category": cid},
-                    {"todo": "深蹲30个", "coin": 10, "coin_var": 2, "exp": 5, "skills": [strength, endurance], "frequency": 1, "category": cid},
-                    {"todo": "平板支撑1分钟", "coin": 15, "coin_var": 3, "exp": 8, "skills": [strength], "frequency": 1, "category": cid},
-                    {"todo": "本周累计运动5天", "coin": 50, "exp": 25, "skills": [endurance], "frequency": 0, "category": cid, "notes": "完成本周运动打卡目标"},
-                ]
-            elif template_name.lower() in ("study", "学习", "读书"):
-                intelligence = sm.get("intelligence", 3)
-                knowledge = sm.get("knowledge", 4)
-                tasks_to_create = [
-                    {"todo": "背单词30个", "coin": 15, "coin_var": 3, "exp": 8, "skills": [intelligence, knowledge], "frequency": 1, "category": cid},
-                    {"todo": "阅读专业书籍30分钟", "coin": 20, "coin_var": 4, "exp": 10, "skills": [knowledge], "frequency": 1, "category": cid},
-                    {"todo": "完成当日作业/练习", "coin": 25, "coin_var": 5, "exp": 12, "skills": [intelligence], "frequency": 1, "category": cid},
-                    {"todo": "复习今日所学内容", "coin": 15, "coin_var": 3, "exp": 8, "skills": [intelligence, knowledge], "frequency": 1, "category": cid, "notes": "艾宾浩斯遗忘曲线复习"},
-                    {"todo": "周末总结本周学习", "coin": 30, "exp": 15, "skills": [knowledge], "frequency": 0, "category": cid, "notes": "整理笔记，查漏补缺"},
-                ]
-            elif template_name.lower() in ("routine", "作息", "日常", "习惯"):
-                discipline = sm.get("discipline", 5)
-                health = sm.get("health", 6)
-                tasks_to_create = [
-                    {"todo": "早起（7点前）", "coin": 10, "coin_var": 2, "exp": 5, "skills": [discipline, health], "frequency": 1, "category": cid, "notes": "开启元气满满的一天"},
-                    {"todo": "早睡（23点前）", "coin": 10, "coin_var": 2, "exp": 5, "skills": [discipline, health], "frequency": 1, "category": cid},
-                    {"todo": "空腹一杯水", "coin": 5, "exp": 2, "skills": [health], "frequency": 1, "category": cid},
-                    {"todo": "每天吃水果", "coin": 5, "exp": 2, "skills": [health], "frequency": 1, "category": cid},
-                    {"todo": "睡前刷牙", "coin": 5, "exp": 2, "skills": [discipline, health], "frequency": 1, "category": cid},
-                    {"todo": "睡前总结今日", "coin": 8, "exp": 4, "skills": [discipline], "frequency": 1, "category": cid, "notes": "回顾得失，规划明天"},
-                ]
-            elif template_name.lower() in ("comprehensive", "综合", "complete", "体系"):
-                # 综合模板 = 作息 + 学习 + 运动 + 生活
-                strength = sm.get("strength", 1)
-                endurance = sm.get("endurance", 2)
-                intelligence = sm.get("intelligence", 3)
-                knowledge = sm.get("knowledge", 4)
-                discipline = sm.get("discipline", 5)
-                health = sm.get("health", 6)
-                tasks_to_create = [
-                    # 作息类
-                    {"todo": "早起", "coin": 5, "coin_var": 2, "exp": 2, "skills": [discipline, health], "frequency": 1, "category": cid, "notes": "开启新的一天"},
-                    {"todo": "早睡", "coin": 10, "coin_var": 2, "exp": 5, "skills": [discipline, health], "frequency": 1, "category": cid},
-                    {"todo": "每日水果", "coin": 5, "exp": 2, "skills": [health], "frequency": 1, "category": cid},
-                    {"todo": "记账", "coin": 5, "exp": 2, "skills": [discipline], "frequency": 1, "category": cid},
-                    # 学习类
-                    {"todo": "背单词", "coin": 15, "coin_var": 3, "exp": 8, "skills": [intelligence, knowledge], "frequency": 1, "category": cid},
-                    {"todo": "阅读", "coin": 10, "coin_var": 2, "exp": 5, "skills": [intelligence], "frequency": 1, "category": cid, "notes": "半小时阅读"},
-                    # 运动类
-                    {"todo": "跑步", "coin": 25, "coin_var": 5, "exp": 15, "skills": [strength, endurance], "frequency": 1, "category": cid, "notes": "跑步半小时"},
-                    {"todo": "俯卧撑", "coin": 10, "coin_var": 2, "exp": 5, "skills": [strength], "frequency": 1, "category": cid},
-                    {"todo": "深蹲", "coin": 10, "coin_var": 2, "exp": 5, "skills": [strength], "frequency": 1, "category": cid},
-                    # 生活类
-                    {"todo": "洗澡", "coin": 5, "coin_var": 2, "exp": 2, "skills": [health], "frequency": 1, "category": cid},
-                    {"todo": "整理书桌", "coin": 5, "exp": 2, "skills": [discipline], "frequency": 1, "category": cid},
-                ]
-            else:
-                return f"❌ 未知模板：{template_name}\n可用模板：fitness（健身）、study（学习）、routine（作息）、comprehensive（综合）"
-
-            resp = await self.client.batch_add_tasks(tasks_to_create)
-            if isinstance(resp, dict) and resp.get("status") == "error":
-                return f"❌ 应用模板失败：{resp.get('message', '未知错误')}"
-
-            lines = [f"✅ 已应用「{template_name}」模板，创建 {len(tasks_to_create)} 个任务", ""]
-            for t in tasks_to_create:
-                coin = t.get('coin', 0)
-                coin_var = t.get('coin_var', 0)
-                coin_str = f"💰{coin}±{coin_var}" if coin_var else f"💰{coin}"
-                freq = t.get('frequency', 0)
-                freq_label = {1: "🔁每日", -1: "♾️习惯"}.get(freq, "📌单次")
-                lines.append(f"  • {freq_label} {t.get('todo', '未命名')} {coin_str} 🧪{t.get('exp', 0)}")
-            lines.extend(["", "💡 提示：", "  1. 前往LifeUp App调整各任务的属性关联（每个任务可关联多个属性）", "  2. 在进阶设置中开启惩罚系数，逾期自动扣金币", "  3. 去商店上架你想要的奖励商品（游戏时间、零食、饮料等）", "  4. 建议设置ATM利率1%-5%，多余金币存入吃利息", "  5. 可在合成功能中设置进化链（如单车→摩托→汽车→飞机→火箭）"])
-            return "\n".join(lines)
-        except Exception as exc:
-            logger.error("llm_apply_template 失败: %s", exc)
             return self._api_error_msg(exc)
