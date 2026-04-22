@@ -1201,3 +1201,55 @@ n        端点：``GET /items``、``GET /items?id=1&id=2`` 或 ``GET /items/{li
     ) -> dict[str, Any]:
         """便捷方法：奖励物品。"""
         return await self.reward("item", content, item_id=item_id, item_name=item_name)
+
+    # -----------------------------------------------------------------
+    # 2.22 批量操作
+    # -----------------------------------------------------------------
+
+    async def batch_add_tasks(
+        self, tasks: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """批量创建多个任务。
+
+        将每个任务配置编码为 URL Scheme，一次性提交。
+
+        Args:
+            tasks: 任务配置列表，每个元素是 ``add_task`` 的参数字典。
+                   可用键：todo(必填), notes, coin, coin_var, exp, skills,
+                   category, item_name, frequency, type, count, item_id,
+                   reminder, deadline, startDate, repetition_period,
+                   auto_check, end_count, freeze, freeze_time, display_order,
+                   notification, secrecy, task_check_items
+        """
+        urls: list[str] = []
+        for t in tasks:
+            filtered: dict[str, Any] = {}
+            for k, v in t.items():
+                if v is not None and v != "":
+                    filtered[k] = v
+            url = _build_url("add_task", filtered)
+            urls.append(url)
+        return await self._post_urls(urls)
+
+    # -----------------------------------------------------------------
+    # 2.23 智能计算
+    # -----------------------------------------------------------------
+
+    @staticmethod
+    def smart_reward(difficulty: str) -> tuple[int, int]:
+        """根据难度智能计算奖励数值。
+
+        Returns:
+            (coin, exp) 元组。
+        """
+        mapping: dict[str, tuple[int, int]] = {
+            "easy": (5, 2),
+            "simple": (5, 2),
+            "medium": (15, 8),
+            "normal": (15, 8),
+            "hard": (30, 20),
+            "difficult": (30, 20),
+            "extreme": (60, 50),
+            "very_hard": (60, 50),
+        }
+        return mapping.get(difficulty.lower(), (10, 5))

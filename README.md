@@ -116,21 +116,48 @@ AstrBot 联动插件，完整对接 [人升(LifeUp)](https://lifeupapp.fun/) App
 | `status` | `/lifeup status` | 综合状态 |
 | `help` | `/lifeup help` | 显示帮助 |
 
-## LLM 工具（11个）
+## LLM 工具（22个）— 三层智能体系
 
-| 工具名 | 功能 |
-|--------|------|
-| `lifeup_query_tasks` | 查询任务列表 |
-| `lifeup_add_task` | 添加任务 |
-| `lifeup_complete_task` | 完成任务 |
-| `lifeup_reward` | 奖励金币/经验 |
-| `lifeup_penalty` | 惩罚扣除 |
-| `lifeup_query_status` | 查询状态 |
-| `lifeup_pomodoro` | 记录番茄钟 |
-| `lifeup_query_items` | 查询商品 |
-| `lifeup_buy_item` | 购买物品 |
-| `lifeup_use_item` | 使用物品 |
-| `lifeup_feeling` | 创建感想 |
+| 工具名 | 功能 | 使用场景 |
+|--------|------|----------|
+| `lifeup_query_tasks` | 查询任务列表 | "我还有什么任务" |
+| `lifeup_query_categories` | 查询所有分类 | 创建计划前了解已有分类 |
+| `lifeup_query_skills` | 查询属性等级 | "我的力量多少级了" |
+| `lifeup_query_coin` | 查询金币余额 | "我有多少金币" |
+| `lifeup_query_items` | 查询商品列表 | "商店有什么好东西" |
+| `lifeup_query_achievements` | 查询成就解锁状态 | "我解锁了什么成就" |
+| `lifeup_query_history` | 查询历史记录 | 分析近期完成情况 |
+| `lifeup_query_status` | 综合状态查询 | "看看我的状态" |
+| `lifeup_query_pending_tasks` ⭐ | **查询待办** | "我今天该做什么" |
+| `lifeup_query_categories` ⭐ | **查询分类** | 创建计划前了解已有分类 |
+| `lifeup_add_task` | 添加单个任务 | "帮我建一个背单词任务" |
+| `lifeup_complete_task` | 完成任务 | "我跑完步了" |
+| `lifeup_give_up_task` | 放弃任务 | "这个不想做了" |
+| `lifeup_delete_task` | 删除任务 | "删掉旧任务" |
+| `lifeup_reward` | 奖励金币/经验 | 完成目标后激励 |
+| `lifeup_penalty` | 惩罚扣除 | 未完成目标 |
+| `lifeup_buy_item` | 购买物品 | "买3个生命药水" |
+| `lifeup_use_item` | 使用物品 | "打开宝箱" |
+| `lifeup_pomodoro` | 记录番茄钟 | "刚才专注了25分钟" |
+| `lifeup_feeling` | 创建感想 | "今天感觉很有成就感" |
+| `lifeup_undo` | 撤销历史完成 | "刚才点错了" |
+| `lifeup_batch_create_tasks` | **批量创建计划** | "帮我制定30天健身计划" |
+| `lifeup_analyze_and_recommend` | **智能分析建议** | "帮我分析并给建议" |
+| `lifeup_smart_reward` | **智能奖励** | 根据难度自动奖励（支持随机浮动±20%） |
+| `lifeup_apply_template` ⭐ | **一键应用模板** | "帮我建立一套健身体系" |
+
+## 体系模板（apply_template）
+
+支持一键应用 4 种预设模板，基于 LifeUp 官方体系建设参考手册设计：
+
+| 模板 | 内容 | 任务数 |
+|------|------|--------|
+| `fitness` / 健身 | 晨跑、俯卧撑、深蹲、平板支撑、周目标 | 5 |
+| `study` / 学习 | 背单词、阅读、作业、复习、周末总结 | 5 |
+| `routine` / 作息 | 早起、早睡、喝水、水果、刷牙、每日总结 | 6 |
+| `comprehensive` / 综合 | 完整方案（作息+学习+运动+生活） | 11 |
+
+每个模板自动配置：合理金币奖励（参考 10金币≈1元）、随机浮动范围(coin_var)、关联属性、每日重复频率。
 
 ## API 客户端方法（55个）
 

@@ -136,239 +136,359 @@ def _emoji_status(status: int | None) -> str:
     """任务状态码 → 表情。"""
     if status is None:
         return "❓"
-    mapping = {0: "⏳ 待完成", 1: "✅ 已完成", 2: "❌ 已放弃", 3: "🧊 已冻结"}
-    return mapping.get(status, f"❓ 状态{status}")
+    mapping = {0: "⏳", 1: "✅", 2: "❌", 3: "🧊"}
+    return mapping.get(status, "❓")
+
+
+def _status_label(status: int | None) -> str:
+    """任务状态码 → 文字标签。"""
+    if status is None:
+        return "未知"
+    mapping = {0: "待完成", 1: "已完成", 2: "已放弃", 3: "已冻结"}
+    return mapping.get(status, f"状态{status}")
 
 
 def _task_type_emoji(t: int | None) -> str:
     """任务类型 → 表情。"""
     if t is None:
         return "📝"
-    mapping = {0: "📝 普通", 1: "🔁 计数", 4: "🍅 番茄"}
-    return mapping.get(t, f"📝 类型{t}")
+    mapping = {0: "📝", 1: "🔢", 4: "🍅"}
+    return mapping.get(t, "📝")
 
 
 def _freq_label(f: int | None) -> str:
     """频率 → 标签。"""
     if f is None:
         return ""
-    mapping = {0: "📌 单次", 1: "🔁 每日", -1: "♾️ 无限"}
-    return mapping.get(f, f"🔁 频率{f}")
+    mapping = {0: "", 1: "🔁", -1: "♾️"}
+    return mapping.get(f, "")
 
 
-# ---------------------------------------------------------------------------
-# 插件主类
-# ---------------------------------------------------------------------------
+def _emoji_progress(current: int, total: int, width: int = 8) -> str:
+    """QQ 风格 emoji 进度条（emoji 宽度在 QQ 中一致）。"""
+    if total <= 0:
+        return "⬜⬜⬜⬜⬜⬜⬜⬜ 0%"
+    ratio = min(current / total, 1.0)
+    filled = int(width * ratio)
+    empty = width - filled
+    bar = "🟩" * filled + "⬜" * empty
+    pct = int(ratio * 100)
+    return f"{bar} {pct}%"
 
-@filter.permission_type(filter.PermissionType.ADMIN)
-class LifeUpPlugin(Star):
-    """LifeUp 联动插件主类。
 
-    通过 HTTP API 对接 LifeUp App，提供完整的任务、经济、物品、
-    属性、成就、番茄钟等管理功能。
+def _format_timestamp(ts: int | str | None) -> str:
+    """格式化时间戳为友好字符串。"""
+    if not ts:
+        return "?"
+    try:
+        from datetime import datetime
+        if isinstance(ts, (int, float)):
+            if ts > 1e12:
+                ts = ts / 1000
+            dt = datetime.fromtimestamp(ts)
+            return dt.strftime("%m-%d %H:%M")
+        return str(ts)
+    except Exception:
+        return str(ts)[:16]
 
-    Attributes:
-        context: AstrBot 上下文
-        config: 插件配置字典
-        client: LifeUp HTTP API 客户端实例
-    """
 
-    def __init__(self, context: Context, config: dict[str, Any]) -> None:
-        super().__init__(context)
-        self.config = config
-        self.client = LifeUpClient(
-            api_url=config.get("api_url", "http://localhost:13276"),
-            api_token=config.get("api_token", ""),
-            timeout=config.get("timeout", 5),
+# ==================================================================
+#  QQ / OneBot V11 风格格式化输出方法
+# ==================================================================
+
+
+def _fmt_tasks(self, tasks: list[dict[str, Any]] | None) -> str:
+    if not tasks:
+        return "━━━ 📋 任务清单 ━━━\n\n  (暂无任务)\n\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈"
+    total = len(tasks)
+    pending = sum(1 for t in tasks if t.get("status") == 0)
+    done = sum(1 for t in tasks if t.get("status") == 1)
+    lines = [
+        f"━━━ 📋 任务清单 ({total}项) ━━━",
+        f"  ⏳待办{pending}  ✅完成{done}  ❌放弃{sum(1 for t in tasks if t.get('status')==2)}",
+        "",
+    ]
+    for t in tasks[:20]:
+        tid = t.get("id", "?")
+        name = t.get("title", t.get("todo", "无名"))
+        status = t.get("status", 0)
+        status_icon = _emoji_status(status)
+        freq = _freq_label(t.get("frequency"))
+        coin = t.get("coin", 0)
+        exp = t.get("exp", 0)
+        cat = t.get("categoryName", "")
+        # 截断名称（QQ 显示约15个中文字符宽度）
+        display_name = name[:14] + "…" if len(name) > 15 else name
+        reward = []
+        if coin:
+            reward.append(f"💰{coin}")
+        if exp:
+            reward.append(f"🧪{exp}")
+        reward_str = " ".join(reward) if reward else ""
+        cat_str = f" 📂{cat}" if cat else ""
+        lines.append(
+            f"{status_icon} [{tid}] {display_name} {freq}{cat_str}"
         )
+        if reward_str:
+            lines.append(f"    └─ {reward_str}")
+    if len(tasks) > 20:
+        lines.append(f"\n  ... 还有 {len(tasks) - 20} 个任务")
+    lines.append("\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈")
+    return "\n".join(lines)
 
-    def terminate(self) -> None:
-        """插件卸载时的清理逻辑（当前无需额外资源释放）。"""
-        logger.info("LifeUp 插件已卸载")
 
-    # ==================================================================
-    #  错误提示
-    # ==================================================================
-
-    def _api_error_msg(self, exc: Exception) -> str:
-        """生成面向用户的 API 错误提示文本。"""
-        return (
-            f"❌ LifeUp API 请求失败\n"
-            f"原因：{exc}\n"
-            f"\n"
-            f"请检查以下配置项：\n"
-            f"1. API 地址：{self.config.get('api_url', '未设置')}\n"
-            f"2. LifeUp App 是否已开启 HTTP API 服务\n"
-            f"3. 网络是否连通"
-        )
-
-    def _no_data_msg(self, category: str = "数据") -> str:
-        return f"ℹ️ 暂无 {category} 数据"
-
-    # ==================================================================
-    #  格式化输出方法
-    # ==================================================================
-
-    def _fmt_tasks(self, tasks: list[dict[str, Any]] | None) -> str:
-        if not tasks:
-            return self._no_data_msg("任务")
-        lines = [f"📋 任务列表（共 {len(tasks)} 项）：\n"]
-        for t in tasks:
-            tid = t.get("id", "?")
-            name = t.get("title", t.get("todo", "无名任务"))
-            status = _emoji_status(t.get("status"))
-            t_type = _task_type_emoji(t.get("taskType", t.get("type")))
-            freq = _freq_label(t.get("frequency"))
-            coin = t.get("coin", 0)
-            exp = t.get("exp", 0)
-            cat = t.get("categoryName", t.get("category", ""))
-            cat_str = f" 📂{cat}" if cat else ""
-            lines.append(
-                f"  [{tid}] {name}\n"
-                f"      {status} | {t_type}{cat_str}\n"
-                f"      💰{coin} 🧪{exp} {freq}"
-            )
-        return "\n".join(lines)
-
-    def _fmt_items(self, items: list[dict[str, Any]] | None) -> str:
-        if not items:
-            return self._no_data_msg("商品")
-        lines = [f"🛒 商品列表（共 {len(items)} 项）：\n"]
-        for it in items:
-            iid = it.get("id", "?")
-            name = it.get("name", "无名商品")
-            price = it.get("price", "?")
-            stock = it.get("quantity", it.get("stock", "?"))
-            desc = it.get("description", "")
-            desc_str = f" — {desc}" if desc else ""
-            lines.append(f"  [{iid}] {name} 💰{price} 库存:{stock}{desc_str}")
-        return "\n".join(lines)
-
-    def _fmt_skills(self, skills: list[dict[str, Any]] | None) -> str:
-        if not skills:
-            return self._no_data_msg("属性")
-        lines = [f"📊 属性列表（共 {len(skills)} 项）：\n"]
-        for sk in skills:
-            sid = sk.get("id", "?")
-            name = sk.get("name", "无名属性")
-            level = sk.get("level", "?")
-            cur_exp = sk.get("cur_exp", sk.get("exp", "?"))
-            max_exp = sk.get("max_exp", "?")
-            color = sk.get("color", "")
-            icon = sk.get("icon", "")
-            icon_str = f" {icon}" if icon else ""
-            lines.append(f"  [{sid}]{icon_str} {name} Lv.{level} ({cur_exp}/{max_exp} 经验){color}")
-        return "\n".join(lines)
-
-    def _fmt_coin(self, data: dict[str, Any] | None) -> str:
-        if not data:
-            return "💰 金币信息：暂无数据"
-        if isinstance(data, dict):
-            amount = data.get("value", data.get("coin", "未知"))
+def _fmt_items(self, items: list[dict[str, Any]] | None) -> str:
+    if not items:
+        return "━━━ 🛒 商店货架 ━━━\n\n  (暂无商品)\n\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈"
+    lines = [
+        f"━━━ 🛒 商店货架 ({len(items)}件) ━━━",
+        "",
+    ]
+    for it in items[:15]:
+        iid = it.get("id", "?")
+        name = it.get("name", "无名")
+        price = it.get("price", "?")
+        stock = it.get("quantity", it.get("stock", "?"))
+        # 库存状态
+        if isinstance(stock, int):
+            stock_icon = "🟢" if stock > 10 else "🟡" if stock > 0 else "🔴"
         else:
-            amount = data
-        return f"💰 金币余额：{amount}"
+            stock_icon = "⚪"
+        display_name = name[:14] + "…" if len(name) > 15 else name
+        lines.append(f"  [{iid}] {display_name} 💰{price} {stock_icon}库存:{stock}")
+    if len(items) > 15:
+        lines.append(f"\n  ... 还有 {len(items) - 15} 件")
+    lines.append("\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈")
+    return "\n".join(lines)
 
-    def _fmt_synthesis(self, formulas: list[dict[str, Any]] | None) -> str:
-        if not formulas:
-            return self._no_data_msg("合成配方")
-        lines = [f"⚗️ 合成配方列表（共 {len(formulas)} 项）：\n"]
-        for f in formulas:
-            fid = f.get("id", "?")
-            name = f.get("name", "无名配方")
-            result = f.get("resultItemName", f.get("result_name", "?"))
-            materials = f.get("materials", "")
-            lines.append(f"  [{fid}] {name} → {result}\n      材料: {materials}")
-        return "\n".join(lines)
 
-    def _fmt_feelings(self, feelings: list[dict[str, Any]] | None) -> str:
-        if not feelings:
-            return self._no_data_msg("感想")
-        lines = [f"📝 感想列表（共 {len(feelings)} 项）：\n"]
-        for fl in feelings[:20]:  # 最多显示 20 条
-            fid = fl.get("id", "?")
-            content = fl.get("content", "")[:50]
-            ts = fl.get("timestamp", fl.get("time", "?"))
-            lines.append(f"  [{fid}] {content} ({ts})")
-        return "\n".join(lines)
+def _fmt_skills(self, skills: list[dict[str, Any]] | None) -> str:
+    if not skills:
+        return "━━━ 📊 属性面板 ━━━\n\n  (暂无属性)\n\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈"
+    lines = [
+        f"━━━ 📊 属性面板 ({len(skills)}项) ━━━",
+        "",
+    ]
+    for sk in skills:
+        name = sk.get("name", "无名")
+        level = sk.get("level", 0)
+        cur_exp = sk.get("cur_exp", sk.get("exp", 0))
+        max_exp = sk.get("max_exp", 100)
+        icon = sk.get("icon", "")
+        icon_str = f"{icon} " if icon else ""
+        bar = _emoji_progress(cur_exp, max_exp, 6)
+        lines.append(f"  {icon_str}{name} Lv.{level}")
+        lines.append(f"    └─ {bar} {cur_exp}/{max_exp}")
+    lines.append("\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈")
+    return "\n".join(lines)
 
-    def _fmt_history(self, history: list[dict[str, Any]] | None) -> str:
-        if not history:
-            return self._no_data_msg("历史记录")
-        lines = [f"📜 历史记录（共 {len(history)} 项）：\n"]
-        for h in history[:20]:
-            hid = h.get("id", "?")
-            task_name = h.get("taskName", h.get("title", "未知任务"))
-            action = h.get("action", "?")
-            ts = h.get("timestamp", h.get("time", "?"))
-            reward = h.get("reward", "")
-            reward_str = f" {reward}" if reward else ""
-            lines.append(f"  [{hid}] {task_name} — {action}{reward_str} ({ts})")
-        return "\n".join(lines)
 
-    def _fmt_categories(self, cats: list[dict[str, Any]] | None, label: str = "分类") -> str:
-        if not cats:
-            return self._no_data_msg(label)
-        lines = [f"📂 {label}列表（共 {len(cats)} 项）：\n"]
-        for c in cats:
-            cid = c.get("id", "?")
-            name = c.get("name", "未命名")
-            lines.append(f"  [{cid}] {name}")
-        return "\n".join(lines)
+def _fmt_coin(self, data: dict[str, Any] | None) -> str:
+    if not data:
+        return "━━━ 💰 资产概览 ━━━\n\n  金币数据不可用\n\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈"
+    if isinstance(data, dict):
+        amount = data.get("value", data.get("coin", "未知"))
+        bank = data.get("bank", data.get("atm", "?"))
+    else:
+        amount = data
+        bank = "?"
+    return (
+        "━━━ 💰 资产概览 ━━━\n\n"
+        f"  👛 钱包 {amount}\n"
+        f"  🏦 存款 {bank}\n\n"
+        "┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈"
+    )
 
-    def _fmt_achievements(self, achievements: list[dict[str, Any]] | None) -> str:
-        if not achievements:
-            return self._no_data_msg("成就")
-        lines = [f"🏆 成就列表（共 {len(achievements)} 项）：\n"]
-        for a in achievements:
-            aid = a.get("id", "?")
-            title = a.get("title", a.get("name", "无名成就"))
-            desc = a.get("content", a.get("description", ""))
-            unlocked = a.get("unlocked", a.get("achieved", False))
-            status = "✅" if unlocked else "🔒"
-            cat = a.get("categoryName", a.get("category", ""))
-            cat_str = f" 📂{cat}" if cat else ""
-            lines.append(f"  [{aid}] {status} {title}{cat_str}\n      {desc}")
-        return "\n".join(lines)
 
-    def _fmt_pomodoro_records(self, records: list[dict[str, Any]] | None) -> str:
-        if not records:
-            return self._no_data_msg("番茄钟记录")
-        lines = [f"🍅 番茄钟记录（共 {len(records)} 项）：\n"]
-        for r in records[:20]:
-            rid = r.get("id", "?")
-            task = r.get("taskName", "未知任务")
-            dur = r.get("duration", 0)
-            dur_min = int(dur / 60000) if dur else 0
-            ts = r.get("timestamp", r.get("time", "?"))
-            lines.append(f"  [{rid}] {task} — {dur_min}分钟 ({ts})")
-        return "\n".join(lines)
+def _fmt_synthesis(self, formulas: list[dict[str, Any]] | None) -> str:
+    if not formulas:
+        return "━━━ ⚗️ 合成配方 ━━━\n\n  (暂无配方)\n\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈"
+    lines = [
+        f"━━━ ⚗️ 合成配方 ({len(formulas)}种) ━━━",
+        "",
+    ]
+    for f in formulas[:12]:
+        fid = f.get("id", "?")
+        name = f.get("name", "无名")
+        result = f.get("resultItemName", f.get("result_name", "?"))
+        display_name = name[:14] + "…" if len(name) > 15 else name
+        lines.append(f"  [{fid}] {display_name} → {result}")
+    if len(formulas) > 12:
+        lines.append(f"\n  ... 还有 {len(formulas) - 12} 种")
+    lines.append("\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈")
+    return "\n".join(lines)
 
-    def _fmt_info(self, info: dict[str, Any] | None) -> str:
-        if not info:
-            return "ℹ️ 无法获取应用信息"
-        lines = ["📱 LifeUp 应用信息：\n"]
-        for k, v in info.items():
-            lines.append(f"  {k}: {v}")
-        return "\n".join(lines)
 
-    def _fmt_status(self, coin_data: dict[str, Any], skills: list[dict[str, Any]]) -> str:
-        parts = [self._fmt_coin(coin_data), ""]
-        if skills:
-            parts.append(self._fmt_skills(skills))
-        return "\n".join(parts)
+def _fmt_feelings(self, feelings: list[dict[str, Any]] | None) -> str:
+    if not feelings:
+        return "━━━ 📝 感想墙 ━━━\n\n  (暂无感想)\n\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈"
+    lines = [
+        f"━━━ 📝 感想墙 ({len(feelings)}条) ━━━",
+        "",
+    ]
+    for fl in feelings[:12]:
+        fid = fl.get("id", "?")
+        content = fl.get("content", "")
+        ts = _format_timestamp(fl.get("timestamp", fl.get("time")))
+        display = content[:35] + "…" if len(content) > 35 else content
+        lines.append(f"  [{fid}] 💭 {display}")
+        lines.append(f"    └─ 🕐 {ts}")
+    if len(feelings) > 12:
+        lines.append(f"\n  ... 还有 {len(feelings) - 12} 条")
+    lines.append("\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈")
+    return "\n".join(lines)
 
-    def _fmt_success(self, resp: dict[str, Any], action: str = "操作") -> str:
-        """格式化 API 执行成功返回的消息。"""
-        if isinstance(resp, dict):
-            if resp.get("status") == "error":
-                msg = resp.get("message", "未知错误")
-                return f"❌ {action}失败：{msg}"
-            data = resp.get("data")
-            if data and isinstance(data, str) and data != "success":
-                return f"✅ {action}成功\n{data}"
-        return f"✅ {action}成功"
 
+def _fmt_history(self, history: list[dict[str, Any]] | None) -> str:
+    if not history:
+        return "━━━ 📜 历史记录 ━━━\n\n  (暂无记录)\n\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈"
+    lines = [
+        f"━━━ 📜 历史记录 ({len(history)}条) ━━━",
+        "",
+    ]
+    for h in history[:12]:
+        hid = h.get("id", "?")
+        task_name = h.get("taskName", h.get("title", "未知"))
+        action = h.get("action", "?")
+        action_icon = {"complete": "✅", "give_up": "❌", "undo": "↩️"}.get(action, "📝")
+        ts = _format_timestamp(h.get("timestamp", h.get("time")))
+        coin = h.get("coin", 0)
+        exp = h.get("exp", 0)
+        reward = []
+        if coin:
+            reward.append(f"💰+{coin}")
+        if exp:
+            reward.append(f"🧪+{exp}")
+        reward_str = " ".join(reward) if reward else ""
+        display_name = task_name[:14] + "…" if len(task_name) > 15 else task_name
+        lines.append(f"  {action_icon} [{hid}] {display_name}")
+        detail = f"🕐 {ts}"
+        if reward_str:
+            detail += f" · {reward_str}"
+        lines.append(f"    └─ {detail}")
+    if len(history) > 12:
+        lines.append(f"\n  ... 还有 {len(history) - 12} 条")
+    lines.append("\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈")
+    return "\n".join(lines)
+
+
+def _fmt_categories(self, cats: list[dict[str, Any]] | None, label: str = "分类") -> str:
+    if not cats:
+        return f"━━━ 📂 {label} ━━━\n\n  (暂无{label})\n\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈"
+    lines = [
+        f"━━━ 📂 {label} ({len(cats)}项) ━━━",
+        "",
+    ]
+    for c in cats:
+        cid = c.get("id", "?")
+        name = c.get("name", "未命名")
+        count = c.get("count", c.get("itemCount", ""))
+        count_str = f" ({count}项)" if count else ""
+        lines.append(f"  📁 [{cid}] {name}{count_str}")
+    lines.append(f"\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈")
+    return "\n".join(lines)
+
+
+def _fmt_achievements(self, achievements: list[dict[str, Any]] | None) -> str:
+    if not achievements:
+        return "━━━ 🏆 成就殿堂 ━━━\n\n  (暂无成就)\n\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈"
+    total = len(achievements)
+    unlocked = sum(1 for a in achievements if a.get("unlocked", a.get("achieved", False)))
+    progress = int(unlocked / total * 100) if total else 0
+    bar = _emoji_progress(unlocked, total, 8)
+    lines = [
+        f"━━━ 🏆 成就殿堂 ({unlocked}/{total}) ━━━",
+        f"  进度 {bar}",
+        "",
+    ]
+    for a in achievements[:15]:
+        aid = a.get("id", "?")
+        title = a.get("title", a.get("name", "无名"))
+        is_unlocked = a.get("unlocked", a.get("achieved", False))
+        status_icon = "🌟" if is_unlocked else "🔒"
+        desc = a.get("content", a.get("description", ""))
+        cat = a.get("categoryName", a.get("category", ""))
+        cat_str = f" · {cat}" if cat else ""
+        display_title = title[:14] + "…" if len(title) > 15 else title
+        lines.append(f"  {status_icon} [{aid}] {display_title}{cat_str}")
+        if desc and not is_unlocked:
+            desc_short = desc[:20] + "…" if len(desc) > 20 else desc
+            lines.append(f"    └─ 💡 {desc_short}")
+    if len(achievements) > 15:
+        lines.append(f"\n  ... 还有 {len(achievements) - 15} 个")
+    lines.append("\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈")
+    return "\n".join(lines)
+
+
+def _fmt_pomodoro_records(self, records: list[dict[str, Any]] | None) -> str:
+    if not records:
+        return "━━━ 🍅 专注日历 ━━━\n\n  (暂无番茄记录)\n\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈"
+    total_ms = sum(r.get("duration", 0) for r in records)
+    total_min = int(total_ms / 60000)
+    lines = [
+        f"━━━ 🍅 专注日历 ({len(records)}条) ━━━",
+        f"  总计专注 {total_min} 分钟",
+        "",
+    ]
+    for r in records[:12]:
+        rid = r.get("id", "?")
+        task = r.get("taskName", "专注")
+        dur = r.get("duration", 0)
+        dur_min = int(dur / 60000) if dur else 0
+        ts = _format_timestamp(r.get("timestamp", r.get("time")))
+        display_task = task[:14] + "…" if len(task) > 15 else task
+        if dur_min >= 45:
+            dur_icon = "🔥"
+        elif dur_min >= 25:
+            dur_icon = "✨"
+        else:
+            dur_icon = "🌱"
+        lines.append(f"  {dur_icon} [{rid}] {display_task} ⏱️{dur_min}分 🕐{ts}")
+    if len(records) > 12:
+        lines.append(f"\n  ... 还有 {len(records) - 12} 条")
+    lines.append("\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈")
+    return "\n".join(lines)
+
+
+def _fmt_info(self, info: dict[str, Any] | None) -> str:
+    if not info:
+        return "━━━ 📱 应用信息 ━━━\n\n  应用信息不可用\n\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈"
+    lines = ["━━━ 📱 应用信息 ━━━", ""]
+    key_labels = {
+        "version": "📦 版本",
+        "appVersion": "📦 版本",
+        "packageName": "📁 包名",
+        "deviceModel": "📱 设备",
+        "apiVersion": "🔌 API版本",
+    }
+    for k, v in info.items():
+        label = key_labels.get(k, f"  {k}")
+        lines.append(f"  {label}: {v}")
+    lines.append("\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈")
+    return "\n".join(lines)
+
+
+def _fmt_status(self, coin_data: dict[str, Any], skills: list[dict[str, Any]]) -> str:
+    parts = [self._fmt_coin(coin_data), ""]
+    if skills:
+        parts.append(self._fmt_skills(skills))
+    total_level = sum(s.get("level", 0) for s in skills) if skills else 0
+    if total_level > 0:
+        avg = total_level // len(skills) if skills else 0
+        parts.append(f"\n📈 总等级 {total_level} · 平均 Lv.{avg}")
+    return "\n".join(parts)
+
+
+def _fmt_success(self, resp: dict[str, Any], action: str = "操作") -> str:
+    """QQ 风格操作结果提示。"""
+    if isinstance(resp, dict):
+        if resp.get("status") == "error":
+            msg = resp.get("message", "未知错误")
+            return f"❌ ━━━ {action}失败 ━━━\n\n  {msg}\n\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈"
+        data = resp.get("data")
+        if data and isinstance(data, str) and data != "success":
+            return f"✅ ━━━ {action}成功 ━━━\n\n  {data}\n\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈"
+    return f"✅ ━━━ {action}成功 ━━━\n\n  已完成！\n\n┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈"
     # ==================================================================
     #  指令组定义
     # ==================================================================
@@ -1508,13 +1628,20 @@ class LifeUpPlugin(Star):
     #  LLM 工具注册（供 AI 自然语言调用）
     # ==================================================================
 
+    # ------------------------------------------------------------------
+    #  层次1：查询工具 —— AI 获取上下文、做决策
+    # ------------------------------------------------------------------
+
     @filter.llm_tool(name="lifeup_query_tasks")
     async def llm_query_tasks(self, event: AstrMessageEvent, category_id: int | None = None) -> str:
-        '''查询人升(LifeUp)任务列表
+        """查询人升(LifeUp)当前任务列表。
+
+        当用户询问"我还有什么任务"、"今天要做的事"、"查看待办"时调用。
+        返回任务ID、名称、状态、奖励等信息，供AI分析用户进度。
 
         Args:
-            category_id (number): 清单ID，可选，用于筛选特定清单的任务
-        '''
+            category_id (number): 清单ID，可选。不填则返回全部清单的任务。
+        """
         try:
             resp = await self.client.query_tasks(category_id=category_id)
             tasks = resp.get("data", []) if isinstance(resp, dict) else resp
@@ -1523,28 +1650,174 @@ class LifeUpPlugin(Star):
             logger.error("llm_query_tasks 失败: %s", exc)
             return self._api_error_msg(exc)
 
+    @filter.llm_tool(name="lifeup_query_categories")
+    async def llm_query_categories(self, event: AstrMessageEvent) -> str:
+        """查询人升(LifeUp)所有已有的清单/分类。
+
+        当需要帮用户创建新计划时，先调用此工具了解已有哪些分类，
+        决定是复用现有分类还是新建分类。返回任务清单、物品分类、成就分类、合成分类。
+
+        无参数。
+        """
+        try:
+            tc_resp, ic_resp, ac_resp, sc_resp = await asyncio.gather(
+                self.client.query_tasks_categories(),
+                self.client.query_items_categories(),
+                self.client.query_achievement_categories(),
+                self.client.query_synthesis_categories(),
+            )
+            parts = []
+            for label, resp in (
+                ("任务清单", tc_resp), ("物品分类", ic_resp),
+                ("成就分类", ac_resp), ("合成分类", sc_resp),
+            ):
+                data = resp.get("data", []) if isinstance(resp, dict) else resp
+                if data:
+                    lines = [f"📂 {label}："]
+                    for c in data:
+                        cid = c.get("id", "?")
+                        name = c.get("name", "未命名")
+                        lines.append(f"  [{cid}] {name}")
+                    parts.append("\n".join(lines))
+            return "\n\n".join(parts) if parts else "ℹ️ 暂无分类数据"
+        except Exception as exc:
+            logger.error("llm_query_categories 失败: %s", exc)
+            return self._api_error_msg(exc)
+
+    @filter.llm_tool(name="lifeup_query_skills")
+    async def llm_query_skills(self, event: AstrMessageEvent) -> str:
+        """查询人升(LifeUp)属性（技能）列表与等级。
+
+        当用户询问"我的属性多少级了"、"力量/智力等级"、或需要分析用户能力成长时调用。
+        返回各属性的当前等级、经验值，供AI做属性规划和建议。
+
+        无参数。
+        """
+        try:
+            resp = await self.client.query_skills()
+            skills = resp.get("data", []) if isinstance(resp, dict) else resp
+            return self._fmt_skills(skills)
+        except Exception as exc:
+            logger.error("llm_query_skills 失败: %s", exc)
+            return self._api_error_msg(exc)
+
+    @filter.llm_tool(name="lifeup_query_coin")
+    async def llm_query_coin(self, event: AstrMessageEvent) -> str:
+        """查询人升(LifeUp)当前金币余额。
+
+        当用户问"我有多少金币"、"钱包余额"、或AI需要判断用户是否有足够资金购买物品时调用。
+
+        无参数。
+        """
+        try:
+            resp = await self.client.query_coin()
+            coin_data = resp.get("data", {}) if isinstance(resp, dict) else resp
+            return self._fmt_coin(coin_data)
+        except Exception as exc:
+            logger.error("llm_query_coin 失败: %s", exc)
+            return self._api_error_msg(exc)
+
+    @filter.llm_tool(name="lifeup_query_items")
+    async def llm_query_items(self, event: AstrMessageEvent) -> str:
+        """查询人升(LifeUp)商店商品列表。
+
+        当用户问"商店有什么"、"可以买什么"、或AI推荐用户购买奖励物品时调用。
+
+        无参数。
+        """
+        try:
+            resp = await self.client.query_items()
+            items = resp.get("data", []) if isinstance(resp, dict) else resp
+            return self._fmt_items(items)
+        except Exception as exc:
+            logger.error("llm_query_items 失败: %s", exc)
+            return self._api_error_msg(exc)
+
+    @filter.llm_tool(name="lifeup_query_achievements")
+    async def llm_query_achievements(self, event: AstrMessageEvent) -> str:
+        """查询人升(LifeUp)成就列表与解锁状态。
+
+        当用户问"我解锁了什么成就"、"还有什么成就没完成"时调用。
+
+        无参数。
+        """
+        try:
+            resp = await self.client.query_achievements()
+            achievements = resp.get("data", []) if isinstance(resp, dict) else resp
+            return self._fmt_achievements(achievements)
+        except Exception as exc:
+            logger.error("llm_query_achievements 失败: %s", exc)
+            return self._api_error_msg(exc)
+
+    @filter.llm_tool(name="lifeup_query_history")
+    async def llm_query_history(self, event: AstrMessageEvent, limit: int = 10) -> str:
+        """查询人升(LifeUp)最近的历史任务记录。
+
+        当需要分析用户近期完成情况、执行力、习惯养成进度时调用。
+
+        Args:
+            limit (number): 返回条数，默认10
+        """
+        try:
+            resp = await self.client.query_history(limit=limit)
+            history = resp.get("data", []) if isinstance(resp, dict) else resp
+            return self._fmt_history(history)
+        except Exception as exc:
+            logger.error("llm_query_history 失败: %s", exc)
+            return self._api_error_msg(exc)
+
+    @filter.llm_tool(name="lifeup_query_status")
+    async def llm_query_status(self, event: AstrMessageEvent) -> str:
+        """查询人升(LifeUp)综合状态（金币 + 属性列表）。
+
+        当用户问"看看我的状态"、"我现在怎么样"、或AI需要全面评估用户当前情况时调用。
+
+        无参数。
+        """
+        try:
+            coin_resp, skills_resp = await asyncio.gather(
+                self.client.query_coin(),
+                self.client.query_skills(),
+            )
+            coin_data = coin_resp.get("data", {}) if isinstance(coin_resp, dict) else coin_resp
+            skills = skills_resp.get("data", []) if isinstance(skills_resp, dict) else skills_resp
+            return self._fmt_status(coin_data, skills)
+        except Exception as exc:
+            logger.error("llm_query_status 失败: %s", exc)
+            return self._api_error_msg(exc)
+
+    # ------------------------------------------------------------------
+    #  层次2：基础操作 —— 单条任务/奖惩/物品
+    # ------------------------------------------------------------------
+
     @filter.llm_tool(name="lifeup_add_task")
     async def llm_add_task(
         self, event: AstrMessageEvent,
         todo: str, notes: str = "",
         coin: int = 0, exp: int = 0,
         skills: list[int] | None = None,
+        frequency: int = 0,
     ) -> str:
-        '''向人升(LifeUp)添加新任务
+        """向人升(LifeUp)添加一条新任务。
+
+        当用户要求"帮我建个任务"、"添加待办"、或AI自动为用户创建计划中的单个任务时调用。
+        frequency 说明：0=单次任务，1=每日重复，-1=无限重复（习惯）。
 
         Args:
-            todo (string): 任务标题，必填
-            notes (string): 备注说明，可选
-            coin (number): 完成奖励金币数，默认0
-            exp (number): 完成奖励经验值，默认0
-            skills (array[number]): 关联的属性ID列表，可选
-        '''
+            todo (string): 任务标题，必填。例如"晨跑3公里"。
+            notes (string): 备注说明，可选。
+            coin (number): 完成奖励金币数，默认0。
+            exp (number): 完成奖励经验值，默认0。
+            skills (array[number]): 关联的属性ID列表，可选。例如[1,3]关联力量和智力。
+            frequency (number): 频率，0=单次（默认），1=每日，-1=无限/习惯。
+        """
         try:
             resp = await self.client.add_task(
                 todo=todo, notes=notes,
                 coin=coin if coin else None,
                 exp=exp if exp else None,
                 skills=skills if skills else None,
+                frequency=frequency,
             )
             return self._fmt_success(resp, "添加任务")
         except Exception as exc:
@@ -1553,11 +1826,13 @@ class LifeUpPlugin(Star):
 
     @filter.llm_tool(name="lifeup_complete_task")
     async def llm_complete_task(self, event: AstrMessageEvent, task_name: str) -> str:
-        '''完成人升(LifeUp)中的一个任务
+        """完成人升(LifeUp)中的一个任务。
+
+        当用户说"我跑完步了"、"做完了"、"任务完成"时调用。
 
         Args:
-            task_name (string): 任务名称或ID，必填
-        '''
+            task_name (string): 任务名称或ID，必填。
+        """
         try:
             task_id = _safe_int(task_name)
             if str(task_id) == task_name and task_id > 0:
@@ -1569,20 +1844,62 @@ class LifeUpPlugin(Star):
             logger.error("llm_complete_task 失败: %s", exc)
             return self._api_error_msg(exc)
 
+    @filter.llm_tool(name="lifeup_give_up_task")
+    async def llm_give_up_task(self, event: AstrMessageEvent, task_name: str) -> str:
+        """放弃人升(LifeUp)中的一个任务。
+
+        当用户说"这个任务不想做了"、"放弃吧"时调用。
+
+        Args:
+            task_name (string): 任务名称或ID，必填。
+        """
+        try:
+            task_id = _safe_int(task_name)
+            if str(task_id) == task_name and task_id > 0:
+                resp = await self.client.give_up_task(task_id=task_id)
+            else:
+                resp = await self.client.give_up_task(name=task_name)
+            return self._fmt_success(resp, f"放弃任务「{task_name}」")
+        except Exception as exc:
+            logger.error("llm_give_up_task 失败: %s", exc)
+            return self._api_error_msg(exc)
+
+    @filter.llm_tool(name="lifeup_delete_task")
+    async def llm_delete_task(self, event: AstrMessageEvent, task_name: str) -> str:
+        """删除人升(LifeUp)中的一个任务。
+
+        当用户要求"删掉这个任务"、"清除旧任务"时调用。
+
+        Args:
+            task_name (string): 任务名称或ID，必填。
+        """
+        try:
+            task_id = _safe_int(task_name)
+            if str(task_id) == task_name and task_id > 0:
+                resp = await self.client.delete_task(task_id=task_id)
+            else:
+                resp = await self.client.delete_task(name=task_name)
+            return self._fmt_success(resp, f"删除任务「{task_name}」")
+        except Exception as exc:
+            logger.error("llm_delete_task 失败: %s", exc)
+            return self._api_error_msg(exc)
+
     @filter.llm_tool(name="lifeup_reward")
     async def llm_reward(
         self, event: AstrMessageEvent,
         type: str, content: str, number: int,
         skills: list[int] | None = None,
     ) -> str:
-        '''给予人升(LifeUp)金币或经验奖励
+        """给予人升(LifeUp)金币或经验奖励。
+
+        当用户完成目标、AI需要正向激励、或执行奖励逻辑时调用。
 
         Args:
             type (string): 奖励类型，必填，enum: ["coin", "exp"]
-            content (string): 奖励原因/描述，必填
-            number (number): 奖励数量，必填
-            skills (array[number]): 经验奖励时关联的属性ID列表，可选
-        '''
+            content (string): 奖励原因/描述，必填。例如"完成健身计划第3天"。
+            number (number): 奖励数量，必填。
+            skills (array[number]): 经验奖励时关联的属性ID列表，可选。
+        """
         try:
             if type == "exp":
                 resp = await self.client.reward_exp(content, number, skills=skills if skills else None)
@@ -1598,13 +1915,15 @@ class LifeUpPlugin(Star):
         self, event: AstrMessageEvent,
         type: str, content: str, number: int,
     ) -> str:
-        '''从人升(LifeUp)扣除金币或经验
+        """从人升(LifeUp)扣除金币或经验。
+
+        当用户未完成目标、违反约定、或AI执行惩罚逻辑时调用。
 
         Args:
             type (string): 扣除类型，必填，enum: ["coin", "exp"]
-            content (string): 扣除原因，必填
-            number (number): 扣除数量，必填
-        '''
+            content (string): 扣除原因，必填。
+            number (number): 扣除数量，必填。
+        """
         try:
             resp = await self.client.penalty(type, content, number)
             return self._fmt_success(resp, f"惩罚扣除{type}")
@@ -1612,68 +1931,18 @@ class LifeUpPlugin(Star):
             logger.error("llm_penalty 失败: %s", exc)
             return self._api_error_msg(exc)
 
-    @filter.llm_tool(name="lifeup_query_status")
-    async def llm_query_status(self, event: AstrMessageEvent) -> str:
-        '''查询人升(LifeUp)当前状态（金币数量与属性列表）
-
-        无参数。
-        '''
-        try:
-            coin_resp, skills_resp = await asyncio.gather(
-                self.client.query_coin(),
-                self.client.query_skills(),
-            )
-            coin_data = coin_resp.get("data", {}) if isinstance(coin_resp, dict) else coin_resp
-            skills = skills_resp.get("data", []) if isinstance(skills_resp, dict) else skills_resp
-            return self._fmt_status(coin_data, skills)
-        except Exception as exc:
-            logger.error("llm_query_status 失败: %s", exc)
-            return self._api_error_msg(exc)
-
-    @filter.llm_tool(name="lifeup_pomodoro")
-    async def llm_pomodoro(
-        self, event: AstrMessageEvent,
-        task_name: str, duration_minutes: int,
-    ) -> str:
-        '''向人升(LifeUp)记录番茄钟（专注时间）
-
-        Args:
-            task_name (string): 关联的任务名称，必填
-            duration_minutes (number): 专注时长（分钟），必填
-        '''
-        try:
-            resp = await self.client.add_pomodoro(
-                task_name=task_name, duration_minutes=duration_minutes,
-            )
-            return self._fmt_success(resp, "记录番茄钟")
-        except Exception as exc:
-            logger.error("llm_pomodoro 失败: %s", exc)
-            return self._api_error_msg(exc)
-
-    @filter.llm_tool(name="lifeup_query_items")
-    async def llm_query_items(self, event: AstrMessageEvent) -> str:
-        '''查询人升(LifeUp)商店商品列表
-
-        无参数。
-        '''
-        try:
-            resp = await self.client.query_items()
-            items = resp.get("data", []) if isinstance(resp, dict) else resp
-            return self._fmt_items(items)
-        except Exception as exc:
-            logger.error("llm_query_items 失败: %s", exc)
-            return self._api_error_msg(exc)
-
     @filter.llm_tool(name="lifeup_buy_item")
     async def llm_buy_item(
         self, event: AstrMessageEvent, item_name: str, quantity: int = 1,
     ) -> str:
-        '''购买人升(LifeUp)商店中的物品
+        """购买人升(LifeUp)商店中的物品。
+
+        当用户要求"买某个物品"、或AI推荐购买奖励/道具时调用。
 
         Args:
-            item_name (string): 物品名称或ID，必填
-            quantity (number): 购买数量，默认1
-        '''
+            item_name (string): 物品名称或ID，必填。
+            quantity (number): 购买数量，默认1。
+        """
         try:
             item_id = _safe_int(item_name)
             if str(item_id) == item_name and item_id > 0:
@@ -1689,11 +1958,13 @@ class LifeUpPlugin(Star):
     async def llm_use_item(
         self, event: AstrMessageEvent, item_name: str,
     ) -> str:
-        '''使用人升(LifeUp)背包中的物品
+        """使用人升(LifeUp)背包中的物品。
+
+        当用户要求"用某个物品"、"打开宝箱"、或AI建议消耗道具时调用。
 
         Args:
-            item_name (string): 物品名称或ID，必填
-        '''
+            item_name (string): 物品名称或ID，必填。
+        """
         try:
             item_id = _safe_int(item_name)
             if str(item_id) == item_name and item_id > 0:
@@ -1705,18 +1976,444 @@ class LifeUpPlugin(Star):
             logger.error("llm_use_item 失败: %s", exc)
             return self._api_error_msg(exc)
 
+    @filter.llm_tool(name="lifeup_pomodoro")
+    async def llm_pomodoro(
+        self, event: AstrMessageEvent,
+        task_name: str, duration_minutes: int,
+    ) -> str:
+        """向人升(LifeUp)记录番茄钟（专注时间）。
+
+        当用户说"刚才专注了25分钟"、"记录番茄钟"时调用。
+
+        Args:
+            task_name (string): 关联的任务名称，必填。
+            duration_minutes (number): 专注时长（分钟），必填。
+        """
+        try:
+            resp = await self.client.add_pomodoro(
+                task_name=task_name, duration_minutes=duration_minutes,
+            )
+            return self._fmt_success(resp, "记录番茄钟")
+        except Exception as exc:
+            logger.error("llm_pomodoro 失败: %s", exc)
+            return self._api_error_msg(exc)
+
     @filter.llm_tool(name="lifeup_feeling")
     async def llm_feeling(
         self, event: AstrMessageEvent, content: str,
     ) -> str:
-        '''向人升(LifeUp)创建一条感想记录
+        """向人升(LifeUp)创建一条感想记录。
+
+        当用户分享心情、总结一天、或AI需要记录里程碑事件时调用。
 
         Args:
-            content (string): 感想内容，必填
-        '''
+            content (string): 感想内容，必填。
+        """
         try:
             resp = await self.client.feeling(content=content)
             return self._fmt_success(resp, "创建感想")
         except Exception as exc:
             logger.error("llm_feeling 失败: %s", exc)
+            return self._api_error_msg(exc)
+
+    @filter.llm_tool(name="lifeup_undo")
+    async def llm_undo(self, event: AstrMessageEvent, history_id: int) -> str:
+        """撤销人升(LifeUp)中的一次历史任务完成记录。
+
+        当用户说"刚才点错了"、"撤销完成"时调用。
+
+        Args:
+            history_id (number): 历史记录ID，必填。
+        """
+        try:
+            resp = await self.client.history_operation(history_id=history_id, operation="undo")
+            return self._fmt_success(resp, "撤销历史完成")
+        except Exception as exc:
+            logger.error("llm_undo 失败: %s", exc)
+            return self._api_error_msg(exc)
+
+    # ------------------------------------------------------------------
+    #  层次3：高级智能 —— 批量计划、智能分析、自动推荐
+    # ------------------------------------------------------------------
+
+    @filter.llm_tool(name="lifeup_batch_create_tasks")
+    async def llm_batch_create_tasks(
+        self, event: AstrMessageEvent,
+        tasks: list[dict[str, Any]],
+    ) -> str:
+        """批量创建人升(LifeUp)任务计划。适用于为用户创建完整的学习/健身/工作计划。
+
+        当用户要求"帮我制定一个30天健身计划"、"创建一个每日学习计划"、
+        "批量添加本周任务"时调用。可以一次创建多个任务，支持设置分类、奖励、重复频率等。
+
+        推荐流程：
+        1. 先调用 lifeup_query_categories 查看已有分类
+        2. 再调用此工具批量创建任务（指定合适的 category）
+
+        Args:
+            tasks (array[object]): 任务配置数组，每个元素包含：
+                - todo (string, 必填): 任务标题
+                - notes (string, 可选): 备注
+                - coin (number, 可选): 基础金币奖励，建议简单任务5-10，困难任务20-50
+                - coin_var (number, 可选): 金币浮动范围，实现随机奖励。如coin=20,coin_var=5则实际奖励15-25金币
+                - exp (number, 可选): 经验奖励
+                - skills (array[number], 可选): 关联属性ID
+                - category (number, 可选): 清单分类ID（先查 categories 获取）
+                - frequency (number, 可选): 0=单次(默认), 1=每日, -1=无限/习惯
+                - task_type (number, 可选): 0=普通(默认), 1=计数任务, 4=番茄钟任务
+                - count (number, 可选): 计数任务的目标次数
+                - deadline (number, 可选): 期限时间戳（毫秒）
+                - reminder (string, 可选): 提醒时间，如"08:00"
+        """
+        try:
+            resp = await self.client.batch_add_tasks(tasks)
+            if isinstance(resp, dict):
+                if resp.get("status") == "error":
+                    return f"❌ 批量创建失败：{resp.get('message', '未知错误')}"
+            lines = [f"✅ 已批量创建 {len(tasks)} 个任务"]
+            for t in tasks:
+                coin = t.get('coin', 0)
+                coin_var = t.get('coin_var', 0)
+                coin_str = f"💰{coin}±{coin_var}" if coin_var else f"💰{coin}"
+                freq = t.get('frequency', 0)
+                freq_label = {1: "[每日]", -1: "[习惯]"}.get(freq, "[单次]")
+                lines.append(f"  • {freq_label} {t.get('todo', '未命名')} {coin_str} 🧪{t.get('exp', 0)}")
+            return "\n".join(lines)
+        except Exception as exc:
+            logger.error("llm_batch_create_tasks 失败: %s", exc)
+            return self._api_error_msg(exc)
+
+    @filter.llm_tool(name="lifeup_analyze_and_recommend")
+    async def llm_analyze_and_recommend(
+        self, event: AstrMessageEvent,
+        focus: str = "balance",
+    ) -> str:
+        """分析用户在人升(LifeUp)中的当前数据，并给出个性化的任务和属性建议。
+
+        当用户要求"帮我分析一下"、"给我一些建议"、"怎么规划比较好"时调用。
+        AI会自动查询任务、属性、金币、历史等数据，综合分析后返回建议文本。
+
+        Args:
+            focus (string): 分析维度，可选值：
+                - "balance": 综合平衡分析（默认）
+                - "tasks": 任务完成效率分析
+                - "skills": 属性成长分析与建议
+                - "routine": 日常习惯与规律分析
+        """
+        try:
+            # 并行查询所有相关数据
+            tasks_resp, skills_resp, coin_resp, history_resp = await asyncio.gather(
+                self.client.query_tasks(),
+                self.client.query_skills(),
+                self.client.query_coin(),
+                self.client.query_history(limit=20),
+            )
+            tasks = tasks_resp.get("data", []) if isinstance(tasks_resp, dict) else tasks_resp
+            skills = skills_resp.get("data", []) if isinstance(skills_resp, dict) else skills_resp
+            coin_data = coin_resp.get("data", {}) if isinstance(coin_resp, dict) else coin_resp
+            history = history_resp.get("data", []) if isinstance(history_resp, dict) else history_resp
+
+            # 分析数据
+            total_tasks = len(tasks) if isinstance(tasks, list) else 0
+            pending = sum(1 for t in (tasks if isinstance(tasks, list) else []) if t.get("status") == 0)
+            completed_today = sum(1 for h in (history if isinstance(history, list) else []) if h.get("action") == "complete")
+
+            coin_val = coin_data.get("value", coin_data.get("coin", "未知")) if isinstance(coin_data, dict) else coin_data
+
+            # 体系完整性分析
+            system_health = []
+            has_daily_tasks = any(
+                t.get("frequency") == 1 for t in (tasks if isinstance(tasks, list) else [])
+            )
+            has_habit_tasks = any(
+                t.get("frequency") == -1 for t in (tasks if isinstance(tasks, list) else [])
+            )
+            reward_tasks = [t for t in (tasks if isinstance(tasks, list) else []) if t.get("coin", 0) > 0]
+            avg_reward = sum(t.get("coin", 0) for t in reward_tasks) / len(reward_tasks) if reward_tasks else 0
+            has_random_reward = any(
+                t.get("coin_var", 0) > 0 for t in (tasks if isinstance(tasks, list) else [])
+            )
+
+            if not has_daily_tasks:
+                system_health.append("  ⚠️ 缺少每日重复任务，建议建立晨间/晚间例行")
+            if not has_habit_tasks:
+                system_health.append("  ⚠️ 缺少习惯养成任务，建议设置无限重复的好习惯")
+            if len(reward_tasks) < 3:
+                system_health.append("  ⚠️ 大部分任务没有设置金币奖励，激励效果可能不足")
+            if avg_reward > 50:
+                system_health.append(f"  ⚠️ 平均奖励过高（{avg_reward:.0f}金币），建议参考体系建设手册，10金币≈1元人民币")
+            if not has_random_reward:
+                system_health.append("  💡 可尝试使用随机奖励（coin_var），增加不确定性趣味性")
+            skill_lines = []
+            if isinstance(skills, list) and skills:
+                lowest = min(skills, key=lambda s: s.get("level", 999))
+                highest = max(skills, key=lambda s: s.get("level", 0))
+                skill_lines = [
+                    f"📊 属性分析：",
+                    f"  最高：{highest.get('name', '?')} Lv.{highest.get('level', '?')}",
+                    f"  最低：{lowest.get('name', '?')} Lv.{lowest.get('level', '?')}",
+                    f"  建议：优先提升 {lowest.get('name', '?')}，可通过相关任务积累经验",
+                ]
+
+            # 构建建议报告
+            lines = [
+                "📋 LifeUp 个人分析报告",
+                "",
+                f"💰 金币余额：{coin_val}",
+                f"📋 任务总览：{total_tasks}个任务，{pending}个待完成",
+                f"📜 近期完成：{completed_today}次",
+                "",
+            ]
+            lines.extend(skill_lines)
+            if system_health:
+                lines.extend([
+                    "",
+                    "🔍 体系健康检查：",
+                ])
+                lines.extend(system_health)
+            lines.extend([
+                "",
+                "💡 建议：",
+            ])
+
+            if focus == "tasks":
+                lines.append("  1. 优先完成高奖励的待办任务")
+                lines.append("  2. 将大任务拆解为多个小任务，逐步完成")
+                lines.append("  3. 对重复性任务设置每日频率，养成习惯")
+            elif focus == "skills":
+                if skills and isinstance(skills, list):
+                    weak = min(skills, key=lambda s: s.get("level", 999))
+                    lines.append(f"  1. 重点提升「{weak.get('name', '?')}」属性")
+                    lines.append(f"  2. 创建关联{weak.get('name', '?')}的任务，每次完成获得经验")
+                    lines.append("  3. 平衡发展，避免某项属性过于落后")
+                else:
+                    lines.append("  1. 先创建几个属性（如力量、智力、耐力）")
+                    lines.append("  2. 为每个属性创建对应的日常任务")
+            elif focus == "routine":
+                lines.append("  1. 建立固定的每日任务清单（晨间/晚间例行）")
+                lines.append("  2. 设置 frequency=1 的每日重复任务")
+                lines.append("  3. 连续完成任务可获得额外金币奖励")
+            else:  # balance
+                lines.append("  1. 保持任务、属性、金币的均衡发展")
+                lines.append("  2. 高价值任务配高奖励，简单任务保持低奖励")
+                lines.append("  3. 定期回顾历史记录，调整任务难度")
+                if pending > 5:
+                    lines.append(f"  4. 当前有{pending}个待办任务，建议优先清理积压")
+                elif total_tasks < 3:
+                    lines.append("  4. 当前任务较少，建议制定一个完整的成长计划")
+
+            return "\n".join(lines)
+        except Exception as exc:
+            logger.error("llm_analyze_and_recommend 失败: %s", exc)
+            return self._api_error_msg(exc)
+
+    @filter.llm_tool(name="lifeup_smart_reward")
+    async def llm_smart_reward(
+        self, event: AstrMessageEvent,
+        task_name: str, difficulty: str = "medium",
+        skills: list[int] | None = None,
+        reason: str = "",
+        use_random: bool = True,
+    ) -> str:
+        """根据任务难度智能计算并执行奖励。适用于AI自动评估用户表现后给予激励。
+
+        当用户完成任务、AI需要自动判断奖励额度时调用。
+        会根据难度自动计算金币和经验值：简单5/2、中等15/8、困难30/20、极限60/50。
+        支持随机奖励范围，增加不确定性趣味性（体系建设推荐用法）。
+
+        Args:
+            task_name (string): 完成的任务名称，必填。
+            difficulty (string): 难度，enum: ["easy", "medium", "hard", "extreme"]，默认"medium"。
+            skills (array[number]): 关联的属性ID，可选。
+            reason (string): 奖励原因，可选。默认使用任务名。
+            use_random (boolean): 是否启用随机浮动，默认true。启用后实际奖励在基础值±20%范围内浮动。
+        """
+        try:
+            coin, exp = LifeUpClient.smart_reward(difficulty)
+            content = reason or f"完成「{task_name}」"
+
+            # 随机浮动
+            if use_random:
+                import random
+                coin_var = int(coin * 0.2)
+                exp_var = int(exp * 0.2)
+                actual_coin = coin + random.randint(-coin_var, coin_var)
+                actual_exp = exp + random.randint(-exp_var, exp_var)
+                actual_coin = max(1, actual_coin)
+                actual_exp = max(1, actual_exp)
+                random_str = f"（随机浮动：基础{coin}±{coin_var}）"
+            else:
+                actual_coin = coin
+                actual_exp = exp
+                random_str = ""
+
+            # 先奖励金币
+            resp_coin = await self.client.reward_coin(content, actual_coin)
+            # 再奖励经验
+            if skills:
+                resp_exp = await self.client.reward_exp(content, actual_exp, skills=skills)
+            else:
+                resp_exp = await self.client.reward_exp(content, actual_exp)
+
+            skill_str = f"（关联属性：{skills}）" if skills else ""
+            return (
+                f"🎯 智能奖励 — 「{task_name}」\n"
+                f"难度：{difficulty} | 💰+{actual_coin}金币 🧪+{actual_exp}经验{skill_str}{random_str}\n"
+                f"✅ 奖励已发放"
+            )
+        except Exception as exc:
+            logger.error("llm_smart_reward 失败: %s", exc)
+            return self._api_error_msg(exc)
+
+    @filter.llm_tool(name="lifeup_query_pending_tasks")
+    async def llm_query_pending_tasks(self, event: AstrMessageEvent) -> str:
+        """查询人升(LifeUp)中当前待完成的任务（未开始/进行中的任务）。
+
+        当用户问"我今天该做什么"、"还有什么没做"、"接下来干什么"时调用。
+        自动过滤出 status=0 的待办任务，按紧急程度排序。
+
+        无参数。
+        """
+        try:
+            resp = await self.client.query_tasks()
+            tasks = resp.get("data", []) if isinstance(resp, dict) else resp
+            if not isinstance(tasks, list):
+                return "ℹ️ 暂无任务数据"
+            pending = [t for t in tasks if t.get("status") == 0]
+            if not pending:
+                return "🎉 太棒了！当前没有待办任务，所有任务都已完成！"
+            lines = [f"📋 待办任务（共 {len(pending)} 项）：\n"]
+            for t in pending[:15]:  # 最多显示15个
+                tid = t.get("id", "?")
+                name = t.get("title", t.get("todo", "无名"))
+                coin = t.get("coin", 0)
+                exp = t.get("exp", 0)
+                freq = t.get("frequency", 0)
+                freq_label = {1: "🔁每日", -1: "♾️习惯"}.get(freq, "📌单次")
+                deadline = t.get("deadline", 0)
+                deadline_str = ""
+                if deadline:
+                    from datetime import datetime
+                    try:
+                        dt = datetime.fromtimestamp(deadline / 1000)
+                        deadline_str = f" ⏰{dt.strftime('%m-%d %H:%M')}"
+                    except:
+                        pass
+                lines.append(f"  [{tid}] {freq_label} {name} 💰{coin} 🧪{exp}{deadline_str}")
+            if len(pending) > 15:
+                lines.append(f"\n... 还有 {len(pending) - 15} 个任务")
+            lines.append("\n💡 建议优先完成高奖励且快到期的事项")
+            return "\n".join(lines)
+        except Exception as exc:
+            logger.error("llm_query_pending_tasks 失败: %s", exc)
+            return self._api_error_msg(exc)
+
+    @filter.llm_tool(name="lifeup_apply_template")
+    async def llm_apply_template(
+        self, event: AstrMessageEvent,
+        template_name: str,
+        category_id: int = 0,
+        skills_map: dict[str, int] | None = None,
+    ) -> str:
+        """一键应用人升(LifeUp)预设体系模板。快速建立完整的游戏化成长体系。
+
+        当用户说"帮我建立一套健身体系"、"给我一套学习计划"、"我想养成好习惯"时调用。
+        AI会自动批量创建任务清单，并配置合理的奖励/频率/属性关联。
+
+        支持的模板：
+        - "fitness" / "健身": 每日运动任务（跑步、俯卧撑、深蹲等），关联力量/耐力属性
+        - "study" / "学习": 每日学习任务（阅读、背单词、专业课），关联智力/知识属性
+        - "routine" / "作息": 日常作息任务（早起、早睡、喝水、刷牙），关联自律/健康属性
+        - "comprehensive" / "综合": 完整的体系参考手册方案（作息+学习+运动+生活）
+
+        Args:
+            template_name (string): 模板名称，enum: ["fitness", "study", "routine", "comprehensive"]
+            category_id (number): 任务清单分类ID，可选。默认0表示不指定分类。
+            skills_map (object): 属性ID映射字典，如{"力量": 1, "智力": 2}。不填则使用默认映射。
+        """
+        try:
+            # 默认属性映射
+            default_skills = {
+                "strength": 1, "endurance": 2, "intelligence": 3,
+                "knowledge": 4, "discipline": 5, "health": 6,
+            }
+            sm = skills_map or default_skills
+            cid = category_id if category_id > 0 else None
+            tasks_to_create: list[dict[str, Any]] = []
+
+            if template_name.lower() in ("fitness", "健身", "运动"):
+                strength = sm.get("strength", 1)
+                endurance = sm.get("endurance", 2)
+                tasks_to_create = [
+                    {"todo": "晨跑3公里", "coin": 30, "coin_var": 5, "exp": 15, "skills": [strength, endurance], "frequency": 1, "category": cid, "notes": "30分钟慢跑，保持心率130-150"},
+                    {"todo": "俯卧撑20个", "coin": 10, "coin_var": 2, "exp": 5, "skills": [strength], "frequency": 1, "category": cid},
+                    {"todo": "深蹲30个", "coin": 10, "coin_var": 2, "exp": 5, "skills": [strength, endurance], "frequency": 1, "category": cid},
+                    {"todo": "平板支撑1分钟", "coin": 15, "coin_var": 3, "exp": 8, "skills": [strength], "frequency": 1, "category": cid},
+                    {"todo": "本周累计运动5天", "coin": 50, "exp": 25, "skills": [endurance], "frequency": 0, "category": cid, "notes": "完成本周运动打卡目标"},
+                ]
+            elif template_name.lower() in ("study", "学习", "读书"):
+                intelligence = sm.get("intelligence", 3)
+                knowledge = sm.get("knowledge", 4)
+                tasks_to_create = [
+                    {"todo": "背单词30个", "coin": 15, "coin_var": 3, "exp": 8, "skills": [intelligence, knowledge], "frequency": 1, "category": cid},
+                    {"todo": "阅读专业书籍30分钟", "coin": 20, "coin_var": 4, "exp": 10, "skills": [knowledge], "frequency": 1, "category": cid},
+                    {"todo": "完成当日作业/练习", "coin": 25, "coin_var": 5, "exp": 12, "skills": [intelligence], "frequency": 1, "category": cid},
+                    {"todo": "复习今日所学内容", "coin": 15, "coin_var": 3, "exp": 8, "skills": [intelligence, knowledge], "frequency": 1, "category": cid, "notes": "艾宾浩斯遗忘曲线复习"},
+                    {"todo": "周末总结本周学习", "coin": 30, "exp": 15, "skills": [knowledge], "frequency": 0, "category": cid, "notes": "整理笔记，查漏补缺"},
+                ]
+            elif template_name.lower() in ("routine", "作息", "日常", "习惯"):
+                discipline = sm.get("discipline", 5)
+                health = sm.get("health", 6)
+                tasks_to_create = [
+                    {"todo": "早起（7点前）", "coin": 10, "coin_var": 2, "exp": 5, "skills": [discipline, health], "frequency": 1, "category": cid, "notes": "开启元气满满的一天"},
+                    {"todo": "早睡（23点前）", "coin": 10, "coin_var": 2, "exp": 5, "skills": [discipline, health], "frequency": 1, "category": cid},
+                    {"todo": "空腹一杯水", "coin": 5, "exp": 2, "skills": [health], "frequency": 1, "category": cid},
+                    {"todo": "每天吃水果", "coin": 5, "exp": 2, "skills": [health], "frequency": 1, "category": cid},
+                    {"todo": "睡前刷牙", "coin": 5, "exp": 2, "skills": [discipline, health], "frequency": 1, "category": cid},
+                    {"todo": "睡前总结今日", "coin": 8, "exp": 4, "skills": [discipline], "frequency": 1, "category": cid, "notes": "回顾得失，规划明天"},
+                ]
+            elif template_name.lower() in ("comprehensive", "综合", "complete", "体系"):
+                # 综合模板 = 作息 + 学习 + 运动 + 生活
+                strength = sm.get("strength", 1)
+                endurance = sm.get("endurance", 2)
+                intelligence = sm.get("intelligence", 3)
+                knowledge = sm.get("knowledge", 4)
+                discipline = sm.get("discipline", 5)
+                health = sm.get("health", 6)
+                tasks_to_create = [
+                    # 作息类
+                    {"todo": "早起", "coin": 5, "coin_var": 2, "exp": 2, "skills": [discipline, health], "frequency": 1, "category": cid, "notes": "开启新的一天"},
+                    {"todo": "早睡", "coin": 10, "coin_var": 2, "exp": 5, "skills": [discipline, health], "frequency": 1, "category": cid},
+                    {"todo": "每日水果", "coin": 5, "exp": 2, "skills": [health], "frequency": 1, "category": cid},
+                    {"todo": "记账", "coin": 5, "exp": 2, "skills": [discipline], "frequency": 1, "category": cid},
+                    # 学习类
+                    {"todo": "背单词", "coin": 15, "coin_var": 3, "exp": 8, "skills": [intelligence, knowledge], "frequency": 1, "category": cid},
+                    {"todo": "阅读", "coin": 10, "coin_var": 2, "exp": 5, "skills": [intelligence], "frequency": 1, "category": cid, "notes": "半小时阅读"},
+                    # 运动类
+                    {"todo": "跑步", "coin": 25, "coin_var": 5, "exp": 15, "skills": [strength, endurance], "frequency": 1, "category": cid, "notes": "跑步半小时"},
+                    {"todo": "俯卧撑", "coin": 10, "coin_var": 2, "exp": 5, "skills": [strength], "frequency": 1, "category": cid},
+                    {"todo": "深蹲", "coin": 10, "coin_var": 2, "exp": 5, "skills": [strength], "frequency": 1, "category": cid},
+                    # 生活类
+                    {"todo": "洗澡", "coin": 5, "coin_var": 2, "exp": 2, "skills": [health], "frequency": 1, "category": cid},
+                    {"todo": "整理书桌", "coin": 5, "exp": 2, "skills": [discipline], "frequency": 1, "category": cid},
+                ]
+            else:
+                return f"❌ 未知模板：{template_name}\n可用模板：fitness（健身）、study（学习）、routine（作息）、comprehensive（综合）"
+
+            resp = await self.client.batch_add_tasks(tasks_to_create)
+            if isinstance(resp, dict) and resp.get("status") == "error":
+                return f"❌ 应用模板失败：{resp.get('message', '未知错误')}"
+
+            lines = [f"✅ 已应用「{template_name}」模板，创建 {len(tasks_to_create)} 个任务", ""]
+            for t in tasks_to_create:
+                coin = t.get('coin', 0)
+                coin_var = t.get('coin_var', 0)
+                coin_str = f"💰{coin}±{coin_var}" if coin_var else f"💰{coin}"
+                freq = t.get('frequency', 0)
+                freq_label = {1: "🔁每日", -1: "♾️习惯"}.get(freq, "📌单次")
+                lines.append(f"  • {freq_label} {t.get('todo', '未命名')} {coin_str} 🧪{t.get('exp', 0)}")
+            lines.extend(["", "💡 提示：", "  1. 前往LifeUp App调整各任务的属性关联（每个任务可关联多个属性）", "  2. 在进阶设置中开启惩罚系数，逾期自动扣金币", "  3. 去商店上架你想要的奖励商品（游戏时间、零食、饮料等）", "  4. 建议设置ATM利率1%-5%，多余金币存入吃利息", "  5. 可在合成功能中设置进化链（如单车→摩托→汽车→飞机→火箭）"])
+            return "\n".join(lines)
+        except Exception as exc:
+            logger.error("llm_apply_template 失败: %s", exc)
             return self._api_error_msg(exc)
