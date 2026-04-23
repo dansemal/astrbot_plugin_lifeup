@@ -179,15 +179,16 @@ n    Args:
     # -- history --
 
     async def query_history(
-        self, offset: int = 0, limit: int = 100, gid: int | None = None,
+        self, offset: int = 0, limit: int = 100, filter_gid: int | None = None,
     ) -> dict[str, Any]:
         """查询历史记录。
 
-        端点：``GET /history?offset={}&limit={}&gid={}``
+        端点：``GET /history?offset={}&limit={}&filterGid={}``
+        filter_gid 用于过滤某个重复任务的所有历史记录。
         """
         params: dict[str, str] = {"offset": str(offset), "limit": str(limit)}
-        if gid is not None:
-            params["gid"] = str(gid)
+        if filter_gid is not None:
+            params["filterGid"] = str(filter_gid)
         qs = urlencode(params)
         return await self._get_json(f"/history?{qs}")
 
@@ -243,6 +244,20 @@ n        端点：``GET /items``、``GET /items?id=1&id=2`` 或 ``GET /items/{li
         """
         return await self._get_json("/info")
 
+    # -- files --
+
+    async def query_file(self, url: str) -> dict[str, Any]:
+        """获取图片/文件。
+
+        端点：``GET /files/{url}``
+        用于获取 content:// 形式的图片URL。
+
+        Args:
+            url: content:// 格式的文件URL
+        """
+        encoded = quote(url, safe="")
+        return await self._get_json(f"/files/{encoded}")
+
     # -- skills --
 
     async def query_skills(self) -> dict[str, Any]:
@@ -255,14 +270,14 @@ n        端点：``GET /items``、``GET /items?id=1&id=2`` 或 ``GET /items/{li
     # -- achievements --
 
     async def query_achievements(
-        self, category_id: int | None = None,
+        self, category_id: int,
     ) -> dict[str, Any]:
         """查询成就列表。
 
-        端点：``GET /achievements`` 或 ``GET /achievements/{category_id}``
+        端点：``GET /achievements/{category_id}``
+        注意：``GET /achievements``（不带参数）目前尚未实现，必须提供分类ID。
         """
-        endpoint = f"/achievements/{category_id}" if category_id is not None else "/achievements"
-        return await self._get_json(endpoint)
+        return await self._get_json(f"/achievements/{category_id}")
 
     # -- feelings --
 
@@ -352,147 +367,233 @@ n        端点：``GET /items``、``GET /items?id=1&id=2`` 或 ``GET /items/{li
         self,
         todo: str,
         notes: str = "",
-        coin: int | None = None,
-        coin_var: int | None = None,
-        exp: int | None = None,
+        coin: int = 0,
+        coin_var: int = 0,
+        exp: int = 0,
         skills: list[int] | None = None,
-        category: int | None = None,
+        category: int = 0,
         item_name: str = "",
-        frequency: int | None = None,
-        task_type: int | None = None,
-        count: int | None = None,
-        item_id: int | None = None,
+        item_id: int = 0,
+        item_amount: int = 0,
+        items: str = "",
+        auto_use_item: bool | None = None,
+        frequency: int = 0,
+        task_type: int = 0,
+        count: int = 0,
+        target_times: int = 0,
         reminder: str = "",
-        deadline: int | None = None,
-        start_date: int | None = None,
-        repetition_period: int | None = None,
+        deadline: int = 0,
+        start_time: int = 0,
+        color: str = "",
+        importance: int = 0,
+        difficulty: int = 0,
+        words: str = "",
+        pin: bool | None = None,
+        frozen: bool | None = None,
+        freeze_until: int = 0,
         auto_check: bool | None = None,
-        end_count: int | None = None,
-        freeze: bool | None = None,
-        freeze_time: int | None = None,
-        display_order: int | None = None,
+        coin_penalty_factor: int = 0,
+        exp_penalty_factor: int = 0,
+        write_feelings: bool | None = None,
+        display_order: int = 0,
         notification: str = "",
-        secrecy: int | None = None,
+        secrecy: int = 0,
         task_check_items: list[str] | None = None,
+        is_affect_shop_reward: bool | None = None,
+        expected_focus_minutes: int = 0,
+        repeat_end_mode: int = 0,
+        repeat_target_times: int = 0,
+        repeat_end_date: int = 0,
+        repeat_end_behavior: int = 0,
     ) -> dict[str, Any]:
         """添加新任务。"""
         url = _build_url("add_task", {
             "todo": todo,
             "notes": notes,
-            "coin": coin,
-            "coin_var": coin_var,
-            "exp": exp,
+            "coin": coin if coin else None,
+            "coin_var": coin_var if coin_var else None,
+            "exp": exp if exp else None,
             "skills": skills,
-            "category": category,
+            "category": category if category else None,
             "item_name": item_name,
+            "item_id": item_id if item_id else None,
+            "item_amount": item_amount if item_amount else None,
+            "items": items,
+            "auto_use_item": auto_use_item,
             "frequency": frequency,
-            "type": task_type,
-            "count": count,
-            "item_id": item_id,
+            "task_type": task_type,
+            "count": count if count else None,
+            "target_times": target_times if target_times else None,
             "reminder": reminder,
-            "deadline": deadline,
-            "startDate": start_date,
-            "repetition_period": repetition_period,
+            "deadline": deadline if deadline else None,
+            "start_time": start_time if start_time else None,
+            "color": color,
+            "importance": importance if importance else None,
+            "difficulty": difficulty if difficulty else None,
+            "words": words,
+            "pin": pin,
+            "frozen": frozen,
+            "freeze_until": freeze_until if freeze_until else None,
             "auto_check": auto_check,
-            "end_count": end_count,
-            "freeze": freeze,
-            "freeze_time": freeze_time,
-            "display_order": display_order,
+            "coin_penalty_factor": coin_penalty_factor if coin_penalty_factor else None,
+            "exp_penalty_factor": exp_penalty_factor if exp_penalty_factor else None,
+            "write_feelings": write_feelings,
+            "display_order": display_order if display_order else None,
             "notification": notification,
-            "secrecy": secrecy,
+            "secrecy": secrecy if secrecy else None,
             "task_check_items": task_check_items,
+            "is_affect_shop_reward": is_affect_shop_reward,
+            "expected_focus_minutes": expected_focus_minutes if expected_focus_minutes else None,
+            "repeat_end_mode": repeat_end_mode if repeat_end_mode else None,
+            "repeat_target_times": repeat_target_times if repeat_target_times else None,
+            "repeat_end_date": repeat_end_date if repeat_end_date else None,
+            "repeat_end_behavior": repeat_end_behavior if repeat_end_behavior else None,
         })
         return await self._post_urls([url])
 
     async def complete_task(
         self,
         task_id: int | None = None,
+        gid: int | None = None,
         name: str | None = None,
         reward_factor: float = 1.0,
     ) -> dict[str, Any]:
         """完成任务。"""
-        key, val = ("id", task_id) if task_id is not None else ("name", name)
-        url = _build_url("complete", {
-            key: val,
-            "reward_factor": reward_factor,
-            "ui": True,
-        })
+        params: dict[str, Any] = {"reward_factor": reward_factor, "ui": True}
+        if task_id is not None:
+            params["id"] = task_id
+        if gid is not None:
+            params["gid"] = gid
+        if name is not None:
+            params["name"] = name
+        url = _build_url("complete", params)
         return await self._post_urls([url])
 
     async def give_up_task(
         self,
         task_id: int | None = None,
+        gid: int | None = None,
         name: str | None = None,
     ) -> dict[str, Any]:
         """放弃任务。"""
-        key, val = ("id", task_id) if task_id is not None else ("name", name)
-        url = _build_url("give_up", {key: val})
+        params: dict[str, Any] = {}
+        if task_id is not None:
+            params["id"] = task_id
+        if gid is not None:
+            params["gid"] = gid
+        if name is not None:
+            params["name"] = name
+        url = _build_url("give_up", params)
         return await self._post_urls([url])
 
     async def freeze_task(
         self,
         task_id: int | None = None,
+        gid: int | None = None,
         name: str | None = None,
     ) -> dict[str, Any]:
         """冻结任务。"""
-        key, val = ("id", task_id) if task_id is not None else ("name", name)
-        url = _build_url("freeze", {key: val})
+        params: dict[str, Any] = {}
+        if task_id is not None:
+            params["id"] = task_id
+        if gid is not None:
+            params["gid"] = gid
+        if name is not None:
+            params["name"] = name
+        url = _build_url("freeze", params)
         return await self._post_urls([url])
 
     async def unfreeze_task(
         self,
         task_id: int | None = None,
+        gid: int | None = None,
         name: str | None = None,
     ) -> dict[str, Any]:
         """解冻任务。"""
-        key, val = ("id", task_id) if task_id is not None else ("name", name)
-        url = _build_url("unfreeze", {key: val})
+        params: dict[str, Any] = {}
+        if task_id is not None:
+            params["id"] = task_id
+        if gid is not None:
+            params["gid"] = gid
+        if name is not None:
+            params["name"] = name
+        url = _build_url("unfreeze", params)
         return await self._post_urls([url])
 
     async def delete_task(
         self,
         task_id: int | None = None,
+        gid: int | None = None,
         name: str | None = None,
     ) -> dict[str, Any]:
         """删除任务。"""
-        key, val = ("id", task_id) if task_id is not None else ("name", name)
-        url = _build_url("delete_task", {key: val})
+        params: dict[str, Any] = {}
+        if task_id is not None:
+            params["id"] = task_id
+        if gid is not None:
+            params["gid"] = gid
+        if name is not None:
+            params["name"] = name
+        url = _build_url("delete_task", params)
         return await self._post_urls([url])
 
     async def edit_task(
         self,
         task_id: int | None = None,
+        gid: int | None = None,
         name: str | None = None,
         todo: str | None = None,
         notes: str | None = None,
         coin: int | None = None,
         coin_var: int | None = None,
+        coin_set_type: str | None = None,
         exp: int | None = None,
+        exp_set_type: str | None = None,
         skills: list[int] | None = None,
         category: int | None = None,
+        item_name: str | None = None,
+        item_id: int | None = None,
+        item_amount: int | None = None,
+        items: str | None = None,
+        auto_use_item: bool | None = None,
         frequency: int | None = None,
         task_type: int | None = None,
         count: int | None = None,
-        item_id: int | None = None,
+        target_times: int | None = None,
         reminder: str | None = None,
         deadline: int | None = None,
-        start_date: int | None = None,
-        repetition_period: int | None = None,
+        start_time: int | None = None,
+        color: str | None = None,
+        importance: int | None = None,
+        difficulty: int | None = None,
+        words: str | None = None,
+        pin: bool | None = None,
+        frozen: bool | None = None,
+        freeze_until: int | None = None,
         auto_check: bool | None = None,
-        end_count: int | None = None,
-        freeze: bool | None = None,
-        freeze_time: int | None = None,
+        coin_penalty_factor: int | None = None,
+        exp_penalty_factor: int | None = None,
+        write_feelings: bool | None = None,
         display_order: int | None = None,
         notification: str | None = None,
         secrecy: int | None = None,
+        task_check_items: list[str] | None = None,
+        is_affect_shop_reward: bool | None = None,
+        expected_focus_minutes: int | None = None,
+        repeat_end_mode: int | None = None,
+        repeat_target_times: int | None = None,
+        repeat_end_date: int | None = None,
+        repeat_end_behavior: int | None = None,
     ) -> dict[str, Any]:
         """编辑已有任务。
 
-        至少需要 ``task_id`` 或 ``name`` 指定目标，其他字段仅传入需要修改的项。
+        至少需要 ``task_id`` 或 ``gid`` 或 ``name`` 指定目标，其他字段仅传入需要修改的项。
         """
         params: dict[str, Any] = {}
         if task_id is not None:
             params["id"] = task_id
+        if gid is not None:
+            params["gid"] = gid
         if name is not None:
             params["name"] = name
         if todo is not None:
@@ -503,42 +604,82 @@ n        端点：``GET /items``、``GET /items?id=1&id=2`` 或 ``GET /items/{li
             params["coin"] = coin
         if coin_var is not None:
             params["coin_var"] = coin_var
+        if coin_set_type is not None:
+            params["coin_set_type"] = coin_set_type
         if exp is not None:
             params["exp"] = exp
+        if exp_set_type is not None:
+            params["exp_set_type"] = exp_set_type
         if skills is not None:
             params["skills"] = skills
         if category is not None:
             params["category"] = category
+        if item_name is not None:
+            params["item_name"] = item_name
+        if item_id is not None:
+            params["item_id"] = item_id
+        if item_amount is not None:
+            params["item_amount"] = item_amount
+        if items is not None:
+            params["items"] = items
+        if auto_use_item is not None:
+            params["auto_use_item"] = auto_use_item
         if frequency is not None:
             params["frequency"] = frequency
         if task_type is not None:
-            params["type"] = task_type
+            params["task_type"] = task_type
         if count is not None:
             params["count"] = count
-        if item_id is not None:
-            params["item_id"] = item_id
+        if target_times is not None:
+            params["target_times"] = target_times
         if reminder is not None:
             params["reminder"] = reminder
         if deadline is not None:
             params["deadline"] = deadline
-        if start_date is not None:
-            params["startDate"] = start_date
-        if repetition_period is not None:
-            params["repetition_period"] = repetition_period
+        if start_time is not None:
+            params["start_time"] = start_time
+        if color is not None:
+            params["color"] = color
+        if importance is not None:
+            params["importance"] = importance
+        if difficulty is not None:
+            params["difficulty"] = difficulty
+        if words is not None:
+            params["words"] = words
+        if pin is not None:
+            params["pin"] = pin
+        if frozen is not None:
+            params["frozen"] = frozen
+        if freeze_until is not None:
+            params["freeze_until"] = freeze_until
         if auto_check is not None:
             params["auto_check"] = auto_check
-        if end_count is not None:
-            params["end_count"] = end_count
-        if freeze is not None:
-            params["freeze"] = freeze
-        if freeze_time is not None:
-            params["freeze_time"] = freeze_time
+        if coin_penalty_factor is not None:
+            params["coin_penalty_factor"] = coin_penalty_factor
+        if exp_penalty_factor is not None:
+            params["exp_penalty_factor"] = exp_penalty_factor
+        if write_feelings is not None:
+            params["write_feelings"] = write_feelings
         if display_order is not None:
             params["display_order"] = display_order
         if notification is not None:
             params["notification"] = notification
         if secrecy is not None:
             params["secrecy"] = secrecy
+        if task_check_items is not None:
+            params["task_check_items"] = task_check_items
+        if is_affect_shop_reward is not None:
+            params["is_affect_shop_reward"] = is_affect_shop_reward
+        if expected_focus_minutes is not None:
+            params["expected_focus_minutes"] = expected_focus_minutes
+        if repeat_end_mode is not None:
+            params["repeat_end_mode"] = repeat_end_mode
+        if repeat_target_times is not None:
+            params["repeat_target_times"] = repeat_target_times
+        if repeat_end_date is not None:
+            params["repeat_end_date"] = repeat_end_date
+        if repeat_end_behavior is not None:
+            params["repeat_end_behavior"] = repeat_end_behavior
 
         url = _build_url("edit_task", params)
         return await self._post_urls([url])
@@ -555,8 +696,13 @@ n        端点：``GET /items``、``GET /items?id=1&id=2`` 或 ``GET /items/{li
         skills: list[int] | None = None,
         item_id: int | None = None,
         item_name: str | None = None,
+        silent: bool | None = None,
     ) -> dict[str, Any]:
-        """奖励金币/经验/物品。"""
+        """奖励金币/经验/物品。
+
+        Args:
+            silent: 设为 true 则禁用操作完成后的UI提示。
+        """
         url = _build_url("reward", {
             "type": type_,
             "content": content,
@@ -564,6 +710,7 @@ n        端点：``GET /items``、``GET /items?id=1&id=2`` 或 ``GET /items/{li
             "skills": skills,
             "item_id": item_id,
             "item_name": item_name,
+            "silent": silent,
         })
         return await self._post_urls([url])
 
@@ -572,12 +719,18 @@ n        端点：``GET /items``、``GET /items?id=1&id=2`` 或 ``GET /items/{li
         type_: str,
         content: str,
         number: int | None = None,
+        silent: bool | None = None,
     ) -> dict[str, Any]:
-        """惩罚扣除。"""
+        """惩罚扣除。
+
+        Args:
+            silent: 设为 true 则禁用操作完成后的UI提示。
+        """
         url = _build_url("penalty", {
             "type": type_,
             "content": content,
             "number": number,
+            "silent": silent,
         })
         return await self._post_urls([url])
 
@@ -698,6 +851,8 @@ n        端点：``GET /items``、``GET /items?id=1&id=2`` 或 ``GET /items/{li
         self,
         content: str,
         feeling_id: int | None = None,
+        time: int | None = None,
+        is_favorite: bool | None = None,
         attach_task: int | None = None,
         attach_achievement: int | None = None,
         attach_item: int | None = None,
@@ -708,6 +863,8 @@ n        端点：``GET /items``、``GET /items?id=1&id=2`` 或 ``GET /items/{li
         Args:
             content: 感想内容
             feeling_id: 指定则更新已有感想，否则新建
+            time: 时间戳（毫秒），可选
+            is_favorite: 是否收藏，可选
             attach_task: 关联任务ID
             attach_achievement: 关联成就ID
             attach_item: 关联商品ID
@@ -716,6 +873,10 @@ n        端点：``GET /items``、``GET /items?id=1&id=2`` 或 ``GET /items/{li
         params: dict[str, Any] = {"content": content}
         if feeling_id is not None:
             params["id"] = feeling_id
+        if time is not None:
+            params["time"] = time
+        if is_favorite is not None:
+            params["is_favorite"] = is_favorite
         if attach_task is not None:
             params["attach_task"] = attach_task
         if attach_achievement is not None:
@@ -777,6 +938,7 @@ n        端点：``GET /items``、``GET /items?id=1&id=2`` 或 ``GET /items/{li
         category_id: int | None = None,
         type_: str | None = None,
         new_name: str | None = None,
+        is_collapsed: bool | None = None,
     ) -> dict[str, Any]:
         """清单管理。
 
@@ -796,6 +958,8 @@ n        端点：``GET /items``、``GET /items?id=1&id=2`` 或 ``GET /items/{li
             params["type"] = type_
         if new_name is not None:
             params["new_name"] = new_name
+        if is_collapsed is not None:
+            params["is_collapsed"] = is_collapsed
         url = _build_url("category", params)
         return await self._post_urls([url])
 
@@ -815,6 +979,7 @@ n        端点：``GET /items``、``GET /items?id=1&id=2`` 或 ``GET /items/{li
         link_task: int | None = None,
         link_shop: int | None = None,
         new_name: str | None = None,
+        is_collapsed: bool | None = None,
     ) -> dict[str, Any]:
         """成就管理。
 
@@ -849,6 +1014,8 @@ n        端点：``GET /items``、``GET /items?id=1&id=2`` 或 ``GET /items/{li
             params["link_shop"] = link_shop
         if new_name is not None:
             params["new_name"] = new_name
+        if is_collapsed is not None:
+            params["is_collapsed"] = is_collapsed
         url = _build_url("achievement", params)
         return await self._post_urls([url])
 

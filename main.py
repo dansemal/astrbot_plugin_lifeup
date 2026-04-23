@@ -254,7 +254,14 @@ class LifeUpPlugin(Star):
         ]
         for t in tasks[:20]:
             tid = t.get("id", "?")
-            name = t.get("title", t.get("todo", "无名"))
+            name = (
+                t.get("text") 
+                or t.get("taskName") 
+                or t.get("name") 
+                or t.get("title") 
+                or t.get("todo") 
+                or "(未命名)"
+            )
             status_icon = _emoji_status(t.get("status", 0))
             freq = _freq_label(t.get("frequency"))
             coin = t.get("coin", 0)
